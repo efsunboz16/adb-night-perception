@@ -1,0 +1,42 @@
+# ADB sistem yapılandırması — tüm modüller bu dosyayı okur.
+# Sayıların gerekçesi: docs/requirements.md
+
+camera:
+  width_px: 1280
+  height_px: 720
+  hfov_deg: 60.0          # yatay görüş açısı; gerçek kamera kalibre edilince fx/cx ile değiştir
+  fx_px: null             # null -> hfov'dan hesaplanır
+  cx_px: null             # null -> width/2
+  fps: 30
+
+headlamp:
+  num_segments: 16
+  coverage_deg: [-16.0, 16.0]   # uzun farın yatay kapsama aralığı (sol -, sağ +)
+  # Farların kameraya göre konumu (metre). x: sağ +, z: ileri +
+  lamps:
+    left:  {x_m: -0.70, z_m: 1.80}
+    right: {x_m:  0.70, z_m: 1.80}
+
+decision:
+  margin_deg: 1.0          # kutu açısına her iki yanda eklenen güvenlik payı
+  release_delay_s: 0.5     # araç kaybolduktan sonra segmenti açmadan önce bekleme (histerezis)
+  min_confidence: 0.35     # bu güvenin altındaki tespitler kararda kullanılmaz
+  predict_ahead_ms: 50     # takip hızıyla bu kadar ileriyi öngör (gecikme telafisi)
+
+safety_monitor:
+  # Bu durumlardan biri olursa tüm uzun far kapanır (kısa fara dönüş)
+  max_frame_gap_ms: 200          # kamera karesi gelmezse
+  max_mean_brightness: 0.85      # görüntü aşırı parlaksa (0-1, ör. aydınlık şehir içi)
+  blur_laplacian_min: 15.0       # lens kirli/bulanıksa (Laplace varyansı)
+
+targets:                  # başarı ölçütleri; eval/ bu değerlerle PASS/FAIL raporlar
+  oncoming_range_m: 220   # karşıdan gelen araç bu mesafeden itibaren algılanmalı (NHTSA test aralığı)
+  oncoming_range_stretch_m: 400
+  preceding_range_m: 100  # öndeki araç (arka lamba)
+  recall_at_range: 0.90
+  glare_violation_rate_max: 0.01   # aracın yanık segmentte kaldığı karelerin oranı
+  high_beam_utilization_min: 0.80  # güvenli olduğu halde açık bırakılan segment oranı
+  flicker_per_min_max: 2
+  embedded_fps_min: 25
+  end_to_end_latency_ms_max: 50
+  dim_response_s_max: 0.20         # araç görünür olduktan segment kısılana kadar

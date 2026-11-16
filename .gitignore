@@ -1,0 +1,9 @@
+data/*
+!data/README.md
+runs/
+*.pt
+*.onnx
+*.engine
+__pycache__/
+.venv/
+build/

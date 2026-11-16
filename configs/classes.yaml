@@ -1,0 +1,17 @@
+# Sınıf tanımları. id'ler YOLO etiket dosyalarında kullanılır — değiştirme, sadece sona ekle.
+# role: target -> farı kıstırır | negative -> öğretilir ama kararda yok sayılır
+
+classes:
+  - {id: 0, name: car,          role: target,   source: BDD100K}
+  - {id: 1, name: truck,        role: target,   source: BDD100K}
+  - {id: 2, name: bus,          role: target,   source: BDD100K}
+  - {id: 3, name: motorcycle,   role: target,   source: BDD100K}
+  - {id: 4, name: bicycle,      role: target,   source: BDD100K}
+  - {id: 5, name: person,       role: target,   source: BDD100K}   # yayaya kamaştırma da ihlal sayılır
+  - {id: 6, name: head_light,   role: target,   source: own}       # karşıdan gelen aracın farı
+  - {id: 7, name: tail_light,   role: target,   source: own}       # öndeki aracın arka lambası
+  - {id: 8, name: street_light, role: negative, source: own}       # sokak lambası
+  - {id: 9, name: reflector,    role: negative, source: own}       # yansıyan tabela / reflektör
+
+# Kendi etiketlerinde (own) ışıklar PVDN tarzı anahtar nokta (en parlak nokta) olarak işaretlenir,
+# kutu otomatik üretilir. Ayrıntı: docs/labeling_guide.md (Faz 1)
