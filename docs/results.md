@@ -34,3 +34,33 @@ Dikkat: Doğrulama etiketleri de otomatik üretildiği için bu değerler gerçe
 2. Recall her koşulda ~0,53–0,54 ile sınırlı, precision 0,63–0,77. Ana darboğaz recall. Koşuldan bağımsız olması, sorunun küçük/uzak araçlarda olduğunu düşündürüyor (doğrulanacak: mesafe bazlı recall).
 3. Motosiklet en zayıf sınıf (AP50 0,40–0,46). Eğitim verisinde %0,35.
 4. Literatürdeki BDD100K sonuçlarıyla doğrudan karşılaştırılamaz (farklı sınıf seti, bölüm ve çözünürlük).
+
+## Deney 1b · Mesafe bazlı recall (`eval/eval_distance.py`)
+
+Aynı model, test seti. Araç sınıfları (car, truck, bus, motorcycle) sınıftan bağımsız eşleştirildi, IoU ≥ 0,5. Mesafe kutu genişliğinden türetildi: ≈ fx · 1,8 m / genişlik, fx = 1109 px (varsayılan kamera, yaklaşık).
+
+- **kutu:** araç kutusu tespit edildi
+- **kutu+ışık:** araç kutusu VEYA kutunun içinde bir head/tail_light tespiti var (ADB için yeterli: o açı kısılabilir)
+
+### Güven eşiği 0,10 (kutu / kutu+ışık)
+
+| Genişlik (px) | ~Mesafe (m) | Gündüz | Gece | Yağmurlu gece |
+|---|---|---|---|---|
+| 4–8 | 249–499 | 0,10 / 0,17 (n=324) | 0,04 / 0,53 (n=55) | 0,20 / 0,70 (n=10) |
+| 8–12 | 166–249 | 0,44 / 0,48 (n=2310) | 0,28 / **0,75** (n=665) | 0,30 / 0,74 (n=73) |
+| 12–16 | 125–166 | 0,66 / 0,69 (n=4286) | 0,54 / 0,83 (n=1877) | 0,48 / 0,81 (n=237) |
+| 16–24 | 83–125 | 0,77 / 0,79 (n=8754) | 0,69 / 0,89 (n=5007) | 0,67 / 0,87 (n=651) |
+| 24–32 | 62–83 | 0,83 / 0,85 (n=6020) | 0,75 / 0,91 (n=4113) | 0,74 / 0,90 (n=579) |
+| 32–64 | 31–62 | 0,88 / 0,89 (n=13138) | 0,82 / 0,93 (n=8801) | 0,79 / 0,91 (n=1338) |
+| ≥ 64 | < 31 | 0,95 / 0,96 (n=18418) | 0,93 / 0,97 (n=11584) | 0,93 / 0,97 (n=2062) |
+
+Güven eşiği 0,25'te gece 166–249 m kutu+ışık recall'ı 0,75'ten 0,59'a düşüyor (tam tablo: `runs/baseline/eval_distance.json`).
+
+### Gözlemler
+
+1. **Recall mesafeyle sert düşüyor.** Gece sadece kutu: < 31 m'de 0,93, 166–249 m'de 0,28. Genel recall'ın 0,53'te kalmasının sebebi uzak araçlar.
+2. **Işık sınıfları gece uzak mesafede belirleyici.** 166–249 m'de kutu+ışık recall'ı 0,28'den 0,75'e çıkıyor (+47 puan). Gündüz katkı yok (0,44 → 0,48), beklendiği gibi. Işıklar sayesinde gece uzak mesafe recall'ı gündüzü geçiyor (0,75 / 0,48).
+3. **Gereksinim durumu (gece, eşik 0,10):** REQ-F-01 (220 m, ≥ 0,90): **0,75**, 15 puan eksik. REQ-F-02 (100 m, ≥ 0,90): 83–125 m'de **0,89**.
+4. **ADB için düşük eşik gerekli.** Eşik 0,25'e çıkınca uzak mesafe recall'ı 16 puan düşüyor. Bedeli (gereksiz kısma) henüz ölçülmedi.
+5. **Sınırlamalar:** Mesafeler yaklaşık. Recall yalnızca BDD'nin etiketlediği araçlar üzerinden (uzak gece etiketleri eksik, ADR-007). Kutu+ışık ölçütü kutu içinde herhangi bir ışık tahminini yeterli sayıyor.
+6. **Faz 3 odağı:** gece 125 m ötesinde ışık tespiti. Otomatik ışık etiketleri yalnızca BDD kutularının içinden üretildiği için BDD'nin kaçırdığı uzak araçların ışıkları da etiketsiz. Sözde etiketleme ilk deney adayı.

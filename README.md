@@ -2,7 +2,7 @@
 
 **Gece sürüşü için kamera tabanlı adaptif uzun far (ADB) algılama sistemi.** Tek ön kameradan araçları, farları ve arka lambaları algılar. Uzun farı açık tutarken yalnızca diğer yol kullanıcılarının bulunduğu açı dilimlerini karartacak 16 segmentlik bir far maskesi üretir. Hedef platform: gömülü cihaz (NVIDIA Jetson) üzerinde gerçek zamanlı çalışma.
 
-> **Durum:** Faz 2 / 6. İlk model eğitildi ve test edildi: araç sınıfında gece mAP50 **0,79**, gündüz **0,84**. Sıradaki iş: mesafe bazlı analiz ve uzak araç tespitinin iyileştirilmesi. Ayrıntılar: [docs/results.md](docs/results.md)
+> **Durum:** Faz 3 / 6. İlk model: araç sınıfında gece mAP50 **0,79**. Gece 220 m bandında araç veya ışığı **%75** oranında yakalanıyor (hedef %90). Sıradaki iş: uzak ışık tespitinin iyileştirilmesi. Ayrıntılar: [docs/results.md](docs/results.md)
 
 ---
 
@@ -73,7 +73,16 @@ flowchart TD
 - **Darboğaz recall:** Her koşulda ~0,53. Model gördüğünde çoğunlukla haklı, ama araçların yaklaşık yarısını kaçırıyor. Koşuldan bağımsız olması, kaçanların uzak/küçük araçlar olduğunu düşündürüyor. Mesafe bazlı analizle doğrulanacak.
 - **Motosiklet en zayıf sınıf:** Eğitim verisinin sadece %0,35'i.
 
-Tam tablolar ve ışık sınıfı sonuçları: [docs/results.md](docs/results.md)
+**Mesafe bazlı recall (gece, güven ≥ 0,10):** Işık sınıfları uzak mesafede belirleyici. 166–249 m'de (220 m hedefi) yalnızca araç kutusuyla recall **0,28**, araç kutusu veya far/arka lamba tespitiyle **0,75**.
+
+| Mesafe | < 31 m | 62–83 m | 125–166 m | 166–249 m |
+|---|---|---|---|---|
+| Sadece araç kutusu | 0,93 | 0,75 | 0,54 | 0,28 |
+| Araç kutusu veya ışığı | 0,97 | 0,91 | 0,83 | **0,75** |
+
+REQ-F-01 (220 m'de ≥ 0,90) için 15 puan eksik. Faz 3'ün odağı bu.
+
+Tam tablolar, ışık sınıfı sonuçları ve sınırlamalar: [docs/results.md](docs/results.md)
 
 ## Veri ve etiketleme
 
@@ -173,7 +182,7 @@ adb-night-perception/
 |---|---|---|
 | 0 | Kapsam, gereksinimler, altyapı | ✅ |
 | 1 | Veri hazırlığı, otomatik far/lamba etiketleri | ✅ |
-| 2 | Temel model, koşul bazlı değerlendirme | 🔄 mesafe bazlı analiz kaldı |
+| 2 | Temel model, koşul ve mesafe bazlı değerlendirme | ✅ |
 | 3 | Uzak araç iyileştirmesi: ufuk bandı dilimleme (SAHI), sözde etiketleme, gece augmentasyonu | ⏳ |
 | 4 | Takip (ByteTrack), far kararı, güvenlik izleyici, sistem metrikleri | ⏳ |
 | 5 | ONNX → TensorRT (FP16/INT8), C++ çıkarım, gecikme ölçümü | ⏳ |
