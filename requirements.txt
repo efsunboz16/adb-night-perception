@@ -1,7 +1,9 @@
+# torch ve torchvision bu dosyada yok: GPU sürümünü ayrıca kur (README > Kurulum)
 numpy
 pyyaml
 opencv-python
 ultralytics
 onnx
-onnxruntime
+onnxruntime-gpu
+tensorrt
 pytest

@@ -34,11 +34,17 @@ def main():
     row("torch", torch_v, "pip install torch (CUDA sürümüyle)")
     if torch_v:
         import torch
+        smi = shutil.which("nvidia-smi")
         if torch.cuda.is_available():
             p = torch.cuda.get_device_properties(0)
-            row("CUDA GPU", f"{p.name}, {p.total_memory / 2**30:.1f} GB, CUDA {torch.version.cuda}")
+            row("CUDA GPU", f"{p.name}, {p.total_memory / 2**30:.1f} GB, CUDA {torch.version.cuda}, "
+                            f"sm_{p.major}{p.minor}")
+        elif "+cpu" in torch.__version__ or torch.version.cuda is None:
+            row("CUDA GPU", None, "torch CPU sürümü kurulu" + (" ama NVIDIA sürücüsü var: CUDA'lı torch kur "
+                "(RTX 50 serisi için CUDA >= 12.8)" if smi else ""))
         else:
-            row("CUDA GPU", None, "GPU yok: eğitim için Colab/Kaggle veya araştırma merkezi")
+            row("CUDA GPU", None, "CUDA'lı torch var ama GPU görülmüyor: sürücüyü güncelle (nvidia-smi)")
+    row("nvidia-smi", shutil.which("nvidia-smi"), "NVIDIA sürücüsü kurulu değil")
     row("ultralytics", ver("ultralytics"), "pip install ultralytics")
     row("opencv", ver("cv2"), "pip install opencv-python")
 

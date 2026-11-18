@@ -67,8 +67,8 @@ Segment genişliği 2° olduğundan 50 m'nin altında düzeltme yapılmazsa yanl
 | REQ-P-02 | Uzun far kullanılabilirliği: güvenli olduğu halde açık bırakılan segment oranı | ≥ %80 |
 | REQ-P-03 | Kısma tepki süresi: hedef görünür → segment kısıldı | ≤ 200 ms |
 | REQ-P-04 | Titreme: gereksiz açma-kapama | ≤ 2 / dakika |
-| REQ-P-05 | Gömülü cihazda işlem hızı | ≥ 25 FPS |
-| REQ-P-06 | Uçtan uca gecikme (kare yakalama → maske) | ≤ 50 ms |
+| REQ-P-05 | Gömülü cihazda işlem hızı | ≥ 25 FPS (Jetson'da doğrulanacak; o zamana kadar ADR-002 vekil ölçümleri) |
+| REQ-P-06 | Uçtan uca gecikme (kare yakalama → maske) | ≤ 50 ms (RTX 5050'de ölçülür) |
 
 Referans olarak ABD'deki ADB kuralı (FMVSS 108) karşıdan gelen aracı düz yolda 15–220 m, öndeki aracı 15–100 m aralığında test ediyor. SAE J3069'un aniden beliren araç testi ise sisteme 2,5 s tepki süresi tanıyor. REQ-P-03 bilinçli olarak bundan çok daha sıkı tutuldu.
 
@@ -90,4 +90,4 @@ Hata türlerinin önemi eşit değildir. **Hatalı açık bırakma** (kamaştır
 - Kamera parametreleri (60° HFOV) varsayımdır. BDD100K kameraları farklıdır. Gerçek kamera kalibre edilince `configs/system.yaml` güncellenir ve bu doküman yeniden üretilir.
 - Far geometrisi (16 segment, ±16°) tipik matris LED farlardan alınmış bir varsayımdır.
 - Mesafe etiketi veri setlerinde yoktur. Mesafe, kutu boyutundan ve far çifti aralığından yaklaşık olarak türetilir. Sınırlılık olarak raporlanır.
-- Donanım kararı: `docs/decisions.md`, ADR-002.
+- Donanım: RTX 5050 dizüstü, Jetson doğrulaması sona bırakıldı (ADR-002).

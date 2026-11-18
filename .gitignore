@@ -1,9 +1,24 @@
+# Veri ve büyük dosyalar (repoya girmez)
 data/*
 !data/README.md
 runs/
+*.zip
 *.pt
 *.onnx
 *.engine
-__pycache__/
+*.cache
+*.npy
+
+# Ortam
 .venv/
+venv/
+__pycache__/
+*.pyc
 build/
+
+# Editör / sistem
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
