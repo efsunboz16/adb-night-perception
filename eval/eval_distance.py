@@ -12,7 +12,7 @@ Mesafe ≈ fx * 1,8 m / kutu genişliği (configs/system.yaml kamerası; BDD kam
 Kullanım:
   python eval/eval_distance.py --weights runs/baseline/weights/best.pt
   python eval/eval_distance.py --weights ... --conds night --conf 0.1 0.25
-Çıktı: ekrana tablo + runs/<ad>/eval_distance.json + eval_distance.png
+Çıktı: ekrana tablo + runs/<ad>/eval_distance[_<imgsz>].json + .png (imgsz 1280 değilse dosya adına eklenir)
 """
 
 import argparse
@@ -34,13 +34,13 @@ CAR_W_M = 1.8
 IMG_W, IMG_H = 1280, 720
 
 
-def read_gt(lbl: Path):
+def read_gt(lbl: Path, classes=VEH):
     if not lbl.exists():
         return np.zeros((0, 4))
     rows = []
     for ln in lbl.read_text(encoding="utf-8").splitlines():
         c, cx, cy, w, h = ln.split()
-        if int(c) in VEH:
+        if int(c) in classes:
             cx, cy, w, h = float(cx) * IMG_W, float(cy) * IMG_H, float(w) * IMG_W, float(h) * IMG_H
             rows.append((cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2))
     return np.array(rows).reshape(-1, 4)
@@ -85,6 +85,87 @@ def match(gt, veh_pred, light_pred, iou_thr):
     return box_hit, box_hit | light_hit
 
 
+def false_alarms(xyxy, cls, gt_all, margin=4.0):
+    """Hiçbir gerçek nesne kutusuna (araç, bisiklet, yaya; payla) düşmeyen araç/ışık tahmini sayısı.
+    ADB'de bunların her biri gereksiz kısılan bir segment demektir. Not: BDD'nin etiketlemediği
+    uzak araçlar da burada yanlış alarm sayılır (ADR-007), yani değer gerçeğinden kötü görünür."""
+    sel = np.isin(cls, VEH + LIGHTS)
+    if not sel.any():
+        return 0
+    b = xyxy[sel]
+    cx, cy = (b[:, 0] + b[:, 2]) / 2, (b[:, 1] + b[:, 3]) / 2
+    if len(gt_all) == 0:
+        return int(sel.sum())
+    inside = ((cx[:, None] >= gt_all[None, :, 0] - margin) & (cx[:, None] <= gt_all[None, :, 2] + margin) &
+              (cy[:, None] >= gt_all[None, :, 1] - margin) & (cy[:, None] <= gt_all[None, :, 3] + margin))
+    return int((~inside.any(axis=1)).sum())
+
+
+def accumulate(st, gt, xyxy, cls, conf, confs, iou_thr, gt_all=None):
+    if gt_all is not None:
+        for c in confs:
+            k = conf >= c
+            st[c]["fp"][0] += false_alarms(xyxy[k], cls[k], gt_all)
+            st[c]["img"][0] += 1
+    if len(gt) == 0:
+        return
+    widths = gt[:, 2] - gt[:, 0]
+    bin_idx = np.full(len(gt), -1)
+    for b, (lo, hi) in enumerate(BINS):
+        bin_idx[(widths >= lo) & (widths < hi)] = b
+    for c in confs:
+        keep = conf >= c
+        box_hit, any_hit = match(gt, xyxy[keep & np.isin(cls, VEH)], xyxy[keep & np.isin(cls, LIGHTS)], iou_thr)
+        for b in range(len(BINS)):
+            sel = bin_idx == b
+            st[c]["gt"][b] += sel.sum()
+            st[c]["box"][b] += box_hit[sel].sum()
+            st[c]["any"][b] += any_hit[sel].sum()
+
+
+def new_stats(confs):
+    return {c: {**{k: np.zeros(len(BINS), int) for k in ("gt", "box", "any")},
+                "fp": np.zeros(1, int), "img": np.zeros(1, int)} for c in confs}
+
+
+def run_sliced(model, paths, data, a, min_conf, cond):
+    """Her görüntüde: tam kare bir kez, bant parçaları ek olarak. İki mod aynı görüntülerde ölçülür."""
+    import cv2
+    from adb.slicing import load_slicing, merge, predict_band, predict_full
+
+    cfg_path = ROOT / "configs" / "slicing.yaml"
+    if not cfg_path.exists():
+        sys.exit("configs/slicing.yaml yok. Önce çalıştır: python scripts/horizon_band.py")
+    cfg = load_slicing(cfg_path)
+    st_full, st_band = new_stats(a.conf), new_stats(a.conf)
+    t_full, t_band, t0 = [], [], time.time()
+    for i, p in enumerate(paths, 1):
+        img = cv2.imread(p)
+        if img is None:
+            continue
+        s0 = time.perf_counter()
+        full = predict_full(model, img, min_conf, a.imgsz)
+        s1 = time.perf_counter()
+        band = predict_band(model, img, cfg, min_conf)
+        merged = merge(full, band)
+        s2 = time.perf_counter()
+        if i > 10:                                   # ilk kareler ısınma, süreye katılmaz
+            t_full.append(s1 - s0)
+            t_band.append(s2 - s1)
+        lbl = data / "labels" / "test" / f"{Path(p).stem}.txt"
+        gt, gt_all = read_gt(lbl), read_gt(lbl, range(6))
+        accumulate(st_full, gt, *full, a.conf, a.iou, gt_all=gt_all)
+        accumulate(st_band, gt, *merged, a.conf, a.iou, gt_all=gt_all)
+        if i % 250 == 0 or i == len(paths):
+            print(f"\r  [{cond}] {i}/{len(paths)}  ({time.time() - t0:.0f} sn)", end="", flush=True)
+    print()
+    if t_full:
+        tf, tb = 1000 * np.mean(t_full), 1000 * np.mean(t_band)
+        print(f"  [{cond}] süre/kare: tam kare {tf:.1f} ms, bant ek {tb:.1f} ms -> toplam {tf + tb:.1f} ms "
+              f"(okuma + ön/son işlem dahil)")
+    return {f"{cond}·tam": st_full, f"{cond}·bant": st_band}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--weights", required=True)
@@ -96,6 +177,9 @@ def main():
     ap.add_argument("--imgsz", type=int, default=1280)
     ap.add_argument("--batch", type=int, default=4)
     ap.add_argument("--limit", type=int, default=0, help="koşul başına en fazla görüntü (0 = hepsi)")
+    ap.add_argument("--slice", action="store_true",
+                    help="tam kare ile tam kare + ufuk bandı dilimlemeyi aynı görüntülerde karşılaştır "
+                         "(configs/slicing.yaml gerekir: scripts/horizon_band.py)")
     a = ap.parse_args()
 
     from ultralytics import YOLO
@@ -103,6 +187,7 @@ def main():
     fx = Camera.from_config(load_config()).fx_px
     data = Path(a.data)
     run_dir = Path(a.weights).resolve().parents[1]
+    tag = "" if a.imgsz == 1280 else f"_{a.imgsz}"          # önceki sonuçların üzerine yazmasın
     min_conf = min(a.conf)
 
     # stats[cond][conf] = {"gt": [bin], "box": [bin], "any": [bin]}
@@ -120,30 +205,16 @@ def main():
         # (MemoryError). Metin dosyası verilince görüntüler tek tek okunur.
         src = run_dir / f"eval_distance_{cond}.txt"
         src.write_text("\n".join(paths), encoding="utf-8")
-        st = {c: {k: np.zeros(len(BINS), int) for k in ("gt", "box", "any")} for c in a.conf}
+        if a.slice:
+            stats.update(run_sliced(model, paths, data, a, min_conf, cond))
+            continue
+        st = new_stats(a.conf)
         t0 = time.time()
         for i, r in enumerate(model.predict(str(src), imgsz=a.imgsz, conf=min_conf, half=True, batch=a.batch,
                                             stream=True, verbose=False), 1):
-            gt = read_gt(data / "labels" / "test" / f"{Path(r.path).stem}.txt")
-            if len(gt) == 0:
-                continue
-            xyxy = r.boxes.xyxy.cpu().numpy()
-            cls = r.boxes.cls.cpu().numpy().astype(int)
-            conf = r.boxes.conf.cpu().numpy()
-            widths = gt[:, 2] - gt[:, 0]
-            bin_idx = np.full(len(gt), -1)
-            for b, (lo, hi) in enumerate(BINS):
-                bin_idx[(widths >= lo) & (widths < hi)] = b
-            for c in a.conf:
-                keep = conf >= c
-                veh = xyxy[keep & np.isin(cls, VEH)]
-                lig = xyxy[keep & np.isin(cls, LIGHTS)]
-                box_hit, any_hit = match(gt, veh, lig, a.iou)
-                for b in range(len(BINS)):
-                    sel = bin_idx == b
-                    st[c]["gt"][b] += sel.sum()
-                    st[c]["box"][b] += box_hit[sel].sum()
-                    st[c]["any"][b] += any_hit[sel].sum()
+            lbl = data / "labels" / "test" / f"{Path(r.path).stem}.txt"
+            accumulate(st, read_gt(lbl), r.boxes.xyxy.cpu().numpy(), r.boxes.cls.cpu().numpy().astype(int),
+                       r.boxes.conf.cpu().numpy(), a.conf, a.iou, gt_all=read_gt(lbl, range(6)))
             if i % 500 == 0 or i == len(paths):
                 print(f"\r  [{cond}] {i}/{len(paths)}  ({time.time() - t0:.0f} sn)", end="", flush=True)
         print()
@@ -169,9 +240,11 @@ def main():
                 cells.append(f"{st[c]['box'][b] / g:.2f} / {st[c]['any'][b] / g:.2f} (n={g})")
             lbl = f"≥ {lo}" if hi > 1000 else f"{lo}–{hi}"
             print(f"| {lbl} | {dist_label(lo, hi)} | " + " | ".join(cells) + " |")
+        fps = [f"{st[c]['fp'][0] / max(st[c]['img'][0], 1):.2f}" for st in stats.values()]
+        print("| **Yanlış alarm / kare** | | " + " | ".join(fps) + " |")
         out["results"][str(c)] = {cond: {k: v.tolist() for k, v in st[c].items()} for cond, st in stats.items()}
 
-    (run_dir / "eval_distance.json").write_text(json.dumps(out, indent=2), encoding="utf-8")
+    (run_dir / f"eval_distance{tag}.json").write_text(json.dumps(out, indent=2), encoding="utf-8")
 
     # ---------------- grafik
     try:
@@ -196,11 +269,11 @@ def main():
         ax.grid(alpha=0.3)
         ax.legend(fontsize=8, ncol=2)
         fig.tight_layout()
-        fig.savefig(run_dir / "eval_distance.png", dpi=130)
-        print(f"\nGrafik: {run_dir / 'eval_distance.png'}")
+        fig.savefig(run_dir / f"eval_distance{tag}.png", dpi=130)
+        print(f"\nGrafik: {run_dir / f'eval_distance{tag}.png'}")
     except Exception as e:
         print(f"Grafik çizilemedi: {e}")
-    print(f"Sonuçlar: {run_dir / 'eval_distance.json'}")
+    print(f"Sonuçlar: {run_dir / f'eval_distance{tag}.json'}")
 
 
 if __name__ == "__main__":
