@@ -1,0 +1,7 @@
+band_frac:
+- 0.239
+- 0.7279
+tile_w: 384
+overlap: 64
+scale: 2.0
+source: scripts/horizon_band.py, 18589 uzak araç (genişlik < 16 px, night, night_adverse)
