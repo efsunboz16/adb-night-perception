@@ -2,7 +2,7 @@
 
 **Gece sürüşü için kamera tabanlı adaptif uzun far (ADB) algılama sistemi.** Tek ön kameradan araçları, farları ve arka lambaları algılar. Uzun farı açık tutarken yalnızca diğer yol kullanıcılarının bulunduğu açı dilimlerini karartacak 16 segmentlik bir far maskesi üretir. Hedef platform: gömülü cihaz (NVIDIA Jetson) üzerinde gerçek zamanlı çalışma.
 
-> **Durum:** Faz 3 / 6. İlk model: araç sınıfında gece mAP50 **0,79**. Gece 220 m bandında araç veya ışığı **%75** oranında yakalanıyor (hedef %90). Sıradaki iş: uzak ışık tespitinin iyileştirilmesi. Ayrıntılar: [docs/results.md](docs/results.md)
+> **Durum:** Faz 3 / 6 tamamlandı, sırada Faz 4 (takip) var. Araç sınıfında gece mAP50 **0,79**. Gece 220 m bandında araç veya ışığı tam kare çıkarımla **%75**, ufuk bandı dilimlemesiyle **%85** yakalanıyor (hedef %90). Faz 3'te dört yöntem denendi: biri işe yaradı, üçü yaramadı; neden yaramadıkları da ölçüldü. Ayrıntılar: [docs/results.md](docs/results.md) · Süreç, sorunlar ve çözümler: [docs/devlog.md](docs/devlog.md)
 
 ---
 
@@ -50,6 +50,7 @@ flowchart TD
 | Modül | Durum | Not |
 |---|---|---|
 | Algılama | ✅ eğitildi | YOLO11s, 1280 px, 10 sınıf |
+| Ufuk bandı dilimleme | ✅ kod + birim test | Uzak araçlar için 2x büyütülmüş bant parçaları ([`adb/slicing.py`](adb/slicing.py)) |
 | Geometri | ✅ kod + birim test | Paralaks düzeltmesi zorunlu: 15 m'de 3,7° hata (~2 segment) |
 | Takip | ⏳ Faz 4 | ByteTrack |
 | Far kararı, güvenlik izleyici | ⏳ Faz 4 | Parametreler [`configs/system.yaml`](configs/system.yaml) içinde |
@@ -81,6 +82,18 @@ flowchart TD
 | Araç kutusu veya ışığı | 0,97 | 0,91 | 0,83 | **0,75** |
 
 REQ-F-01 (220 m'de ≥ 0,90) için 15 puan eksik. Faz 3'ün odağı bu.
+
+**Faz 3: Uzak mesafe deneyleri.** Gece, 166–249 m, güven ≥ 0,10, araç kutusu veya ışığı.
+
+| Deney | Yöntem | Recall | Yanlış alarm / kare | Sonuç |
+|---|---|---|---|---|
+| 1b | Temel model, tam kare | 0,75 | 2,87 | referans |
+| **2** | **+ ufuk bandı dilimleme** (384 px parçalar, 2x büyütme) | **0,85** | 4,27 | ✅ +10 puan, gecikme bedeli var |
+| 3 | Sözde etiketleme (öğretmen model + dilimleme) | 0,75 | 2,88 | ❌ etki yok |
+| 4 | P2 tespit kafası (stride 4, +%33 hesap) | 0,74 | 2,90 | ❌ etki yok |
+| 5 | Tam kareyi 2x büyütme (imgsz 2560) | 0,79 | 3,03 | ⚠️ +4 puan, 4 kat maliyet |
+
+Başarısız deneyler de bilgi verdi. Uzak araçları bulduran şey ne daha fazla etiket (Deney 3), ne daha ince özellik haritası (Deney 4), ne de yalnızca büyütme (Deney 5). Belirleyici olan, uzak bölgeye **ayrıca ve dar bir kadrajla** bakmak. Bu yüzden dilimleme kalıcı oldu ([ADR-015](docs/decisions.md)). Ek gecikmesi Faz 4'te takip ile düşürülecek: bant iki karede bir işlenecek. Tek karelik yanlış alarmlar da kare tutarlılığıyla elenecek.
 
 Tam tablolar, ışık sınıfı sonuçları ve sınırlamalar: [docs/results.md](docs/results.md)
 
@@ -148,18 +161,26 @@ python scripts/autolabel_lights.py                                              
 python train/train_baseline.py --check                                     # ön kontrol
 python train/train_baseline.py                                             # 8 saatlik eğitim
 python eval/eval_conditions.py --weights runs/baseline/weights/best.pt     # koşul bazlı test
+python eval/eval_distance.py --weights runs/baseline/weights/best.pt      # mesafe bazlı recall + yanlış alarm
+python scripts/horizon_band.py                                            # ufuk bandını veriden belirle
+python eval/eval_distance.py --weights runs/baseline/weights/best.pt --slice   # dilimlemeli
+```
+
+Kaggle'da eğitilen bir modelin çıktı zip'i doğrudan içe aktarılabilir. Klasöre açılmış `.pt` dosyaları otomatik olarak yeniden paketlenir:
+```powershell
+python scripts/import_kaggle_output.py --eval
 ```
 
 ## Repo yapısı
 
 ```
 adb-night-perception/
-├── adb/            geometri (piksel→açı, paralaks, segment maskesi); takip ve karar modülleri buraya gelecek
-├── configs/        system.yaml (kamera, far, eşikler, hedefler), classes.yaml
+├── adb/            geometri (piksel→açı, paralaks, segment maskesi), ufuk bandı dilimleme; takip ve karar buraya gelecek
+├── configs/        system.yaml (kamera, far, eşikler, hedefler), classes.yaml, slicing.yaml, models/ (P2 mimarisi)
 ├── scripts/        veri hazırlama, otomatik etiketleme, analiz ve yardımcı araçlar
 ├── train/          yerel eğitim
 ├── kaggle/         Kaggle notebook'u ve eğitim scripti
-├── eval/           koşul bazlı değerlendirme
+├── eval/           koşul ve mesafe bazlı değerlendirme, yanlış alarm ölçümü
 ├── deploy/         ONNX / TensorRT / C++ (Faz 5)
 ├── docs/           gereksinimler, mimari, kararlar (ADR), literatür, sonuçlar
 ├── tests/          birim testler
@@ -172,9 +193,10 @@ adb-night-perception/
 |---|---|
 | [requirements.md](docs/requirements.md) | Kimlik numaralı gereksinimler (REQ-F/P/S), piksel bütçesi, çalışma alanı (ODD) |
 | [architecture.md](docs/architecture.md) | Modüller, arayüzler, karşılaştırılacak algılama mimarileri |
-| [decisions.md](docs/decisions.md) | 10 karar kaydı (ADR): bağlam, karar, sonuç |
+| [decisions.md](docs/decisions.md) | 15 karar kaydı (ADR): bağlam, karar, sonuç |
 | [literature.md](docs/literature.md) | SmartBeam, PVDN, 2PCNet, SAHI vb. ve projeye katkıları |
-| [results.md](docs/results.md) | Deney sonuçları ve gözlemler |
+| [results.md](docs/results.md) | Deney sonuçları ve gözlemler (Deney 1–5) |
+| [devlog.md](docs/devlog.md) | Geliştirme günlüğü: karşılaşılan sorunlar, çözümler, çözülemeyenler |
 
 ## Yol haritası
 
@@ -183,7 +205,7 @@ adb-night-perception/
 | 0 | Kapsam, gereksinimler, altyapı | ✅ |
 | 1 | Veri hazırlığı, otomatik far/lamba etiketleri | ✅ |
 | 2 | Temel model, koşul ve mesafe bazlı değerlendirme | ✅ |
-| 3 | Uzak araç iyileştirmesi: ufuk bandı dilimleme (SAHI), sözde etiketleme, gece augmentasyonu | ⏳ |
+| 3 | Uzak araç iyileştirmesi: dilimleme ✅, sözde etiketleme ❌, P2 kafası ❌, giriş büyütme ⚠️ | ✅ |
 | 4 | Takip (ByteTrack), far kararı, güvenlik izleyici, sistem metrikleri | ⏳ |
 | 5 | ONNX → TensorRT (FP16/INT8), C++ çıkarım, gecikme ölçümü | ⏳ |
 | 6 | Doğrulama, FMEA, demo videosu | ⏳ |
@@ -193,6 +215,9 @@ adb-night-perception/
 - **Işık sınıflarının gerçek doğruluğu ölçülmedi.** Doğrulama etiketleri de otomatik üretildiği için raporlanan değerler modelin otomatik etiketleyiciyi ne kadar taklit ettiğini gösteriyor. İnsan kontrollü ~150 karelik bir set planlandı.
 - **Mesafeler yaklaşık.** BDD100K'da mesafe etiketi yok. Mesafe kutu genişliğinden, varsayılan kamera parametreleriyle (60° HFOV) türetiliyor.
 - **Gömülü performans henüz ölçülmedi.** Jetson'da doğrulanana kadar FPS iddiası yapılmıyor ([ADR-002](docs/decisions.md)).
+- **Otomatik ışık etiketlerinde gürültü var.** Yol yüzeyindeki far yansıması bazen tek, büyük bir ışık kutusu olarak etiketleniyor. Park halindeki araç gövdelerindeki yansımalar da ışık sayılabiliyor. Ayrı bir etiket temizliği deneyi planlandı.
+- **Yanlış alarm ölçümü kötümser.** BDD'nin etiketlemediği uzak araçlar da yanlış alarm sayılıyor (ADR-007).
+- **Gecikme ölçümleri kararsız.** Aynı koşulda dizüstü GPU'da tam kare 16–44 ms arası ölçüldü. Güvenilir ölçüm Faz 5'te TensorRT ile yapılacak.
 - **Reflektörler** (yansıyan tabelalar) otomatik etiketlenemiyor, model onları arka plan olarak öğreniyor.
 
 ## Lisans

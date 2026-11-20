@@ -62,3 +62,27 @@ Her önemli teknik karar burada kısa olarak kayıt altına alınır: bağlam, k
   - Eğitim sırasında doğrulama 1.500 karelik alt kümede yapılır, tam değerlendirme sonda test setinde koşul bazında yapılır.
   - Süre `--hours` ile sınırlanır (varsayılan 8 saat). İşçi sayısı RAM ve disk belleğine göre otomatik seçilir.
 - **Etki:** Gündüz sonuçları rastgele örneklemeye göre biraz düşebilir. Bu bilinçli bir takas.
+
+## ADR-011 · Ufuk bandı dilimleme: aday, koşullu kabul
+- **Bulgu (Deney 2):** Gece 220 m bandında kutu+ışık recall'ı 0,75 → 0,85. Gecikme 15,9 → 48,5 ms (RTX 5050, optimize edilmemiş).
+- **Karar:** Dilimleme sisteme aday olarak alındı. Kalıcı kabul için iki koşul: (1) kare başına yanlış alarm artışı kabul edilebilir olmalı, (2) gecikme, bant her iki karede bir işlenerek ve/veya TensorRT ile bütçe içine çekilmeli (hedef: toplam ≤ 30 ms, Jetson payı için).
+- **Ayarlar:** `configs/slicing.yaml` (`scripts/horizon_band.py` üretir).
+
+## ADR-012 · Uzak ışık ve araçlar için sözde etiketleme (Deney 3)
+- **Bağlam:** Mesafe analizi (Deney 1b) recall'ın 125 m ötesinde düştüğünü gösterdi. BDD'nin uzak gece etiketleri eksik (ADR-007) ve otomatik ışık etiketleri yalnızca BDD kutularının içinden üretildiği için o araçların ışıkları da etiketsiz. Model uzak ışıkları bastırmayı öğreniyor.
+- **Karar:** Temel model + ufuk bandı dilimleme öğretmen olarak kullanılır (`scripts/pseudo_label.py`). Train/val gece ve alacakaranlık karelerine, mevcut etiketlerle çakışmayan üç tür etiket eklenir:
+  - **A:** BDD araç kutusunun alt %75'indeki ışık tahmini (güven ≥ 0,45)
+  - **B:** Kutusuz ışık, yalnızca ufuk bandında, küçük ve aynı sınıftan bir eşiyle çift halindeyse. Far çifti eşleştirmesi, tek ışık sokak lambası olabileceği için eklenmez.
+  - **C:** Etiketsiz uzak araç (genişlik < 32 px, güven ≥ 0,5)
+- **Deney tasarımı:** Yeni model temel modelle birebir aynı ayarlarla eğitilir (Kaggle 2×T4, 11 saat, aynı 25.000 karelik liste). Tek fark etiketler. Değerlendirme aynı test seti ve aynı scriptlerle yapılır.
+- **Risk:** Öğretmenin hataları etikete dönüşür (onay yanlılığı). Yüksek güven eşikleri ve çift şartı bunu sınırlamak için. Etiket kalitesi önizlemeyle gözle kontrol edilir.
+- **Sonuç (2026-11-20):** Etki yok. Gece 220 m bandında recall tam karede 0,75 → 0,75, bantla 0,85 → 0,83 (belirsizlik ±1,5–2 puan). Yanlış alarm değişmedi. Sözde etiketler varsayılan eğitim hattına alınmadı. Ayrıntı: results.md, Deney 3.
+
+## ADR-013 · Uzak mesafe için öncelik: model içi çözünürlük
+- **Bağlam:** Deney 2 (dilimleme, +10 puan) ve Deney 3 (sözde etiket, +0) birlikte, uzak mesafe darboğazının etiket değil çözünürlük olduğunu gösteriyor.
+- **Karar:** Sonraki recall deneyleri dilimlemenin kazancını modelin içine taşımayı hedefler: (1) P2 tespit kafası (stride 4) ve/veya (2) büyütülmüş bant parçalarıyla eğitim (SAHI ince ayarı). Başarı ölçütü: tam kare çıkarımla 220 m'de ≥ 0,85, yani dilimlemenin seviyesine gecikme bedeli olmadan ulaşmak.
+- **Deney 4 tasarımı (P2 kafası):** `configs/yolo11s-p2.yaml`. YOLO11s'e backbone P2/4 çıktısı bağlanır, Detect dört ölçekte çalışır. Backbone ve ilk FPN katmanları `yolo11s.pt`'den aktarılır (297/593 öğe), yeni katmanlar rastgele başlar. Etiketler, eğitim listesi, süre (11 saat, Kaggle 2×T4) ve batch (16) temel modelle aynı. Değerlendirme aynı test seti ve scriptlerle.
+  - **Maliyet (yerel ölçüm, 1280 px):** 9,46 → 9,58 M parametre, 88,8 → 117,9 GFLOPs (+%33). Yalnız ağ gecikmesi FP16 7,3 → 10,0 ms (RTX 5050). Bant dilimleme ~2 kat ekliyordu. Eğitim belleği +%52.
+  - **Karıştırıcı:** Aynı süre sınırında P2 modeli ~%25 daha az epoch görür. Sonuç temel modelden kötü çıkarsa önce bu kontrol edilir (epoch sayısı raporlanır).
+  - **Uygulama notu:** Çift GPU'da (DDP) Ultralytics modeli alt süreçte yaml'dan yeniden kurar. Ağırlıklar bu yüzden `.load()` ile değil `train(pretrained=...)` ile verilir, aksi halde model sıfırdan eğitilir.
+- **Paralel:** Yanlış alarmı (~2,9/kare) düşürmek için VLM ile ışık etiketi doğrulama (Deney 4 adayı).
