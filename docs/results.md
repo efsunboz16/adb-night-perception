@@ -133,3 +133,145 @@ Doğrulama setinde (1.500 kare, ama etiketler değiştiği için tam karşılaş
 2. Tek tutarlı değişim yüksek eşikte uzak recall'daki +3 puan. Model uzak ışıklarda biraz daha emin, ama düşük eşikte yakaladıkları aynı.
 3. **Yorum:** Uzak mesafe darboğazı etiket eksikliği değil, çözünürlük gibi görünüyor. Aynı modelin uzak bölgeye büyütülmüş bakması (Deney 2) +10 puan kazandırdı, daha fazla etiket kazandırmadı. ADR-007'deki "eksik etiketler uzak ışıkları bastırtıyor" hipotezi bu doz ölçeğinde doğrulanmadı.
 4. Sınırlama: Doz küçüktü (%1). Çok daha fazla sözde etiketle farklı bir sonuç çıkması dışlanamaz, ama Deney 2'deki kanıt önceliği çözünürlüğe veriyor.
+
+## Deney 4 · P2 tespit kafası (ADR-013)
+
+`configs/models/yolo11s-p2.yaml`: YOLO11s'e stride-4 dalı eklendi, dört çıkışlı Detect (P2–P5). Model 9,58M parametre, 117,9 GFLOPs @1280 (temel: 9,46M / 88,8). Kaggle kotası yetmediği için 11 saat yerine **3 saat** eğitildi (2×T4, batch 10). Başlangıç noktası temel modelin `best.pt` dosyası. Omurga ve yukarıdan aşağı boyun aktarıldı. Aşağıdan yukarı yol ve Detect kafası katman indeksleri değiştiği için sıfırdan öğrenildi. Veri ve etiketler temel modelle aynı.
+
+### Gece, test, güven eşiği 0,10 (araç kutusu veya ışığı)
+
+| Mesafe | Temel · tam | P2 · tam | Temel · bant | P2 · bant |
+|---|---|---|---|---|
+| 249 m+ (n=55) | 0,53 | 0,60 | 0,69 | 0,73 |
+| **166–249 m (n=665)** | **0,75** | **0,74** | **0,85** | **0,84** |
+| 125–166 m (n=1877) | 0,83 | 0,82 | 0,89 | 0,88 |
+| 83–125 m (n=5007) | 0,89 | 0,88 | 0,92 | 0,92 |
+| < 31 m (n=11584) | 0,97 | 0,97 | 0,97 | 0,97 |
+| Yanlış alarm / kare | 2,87 | 2,90 | 4,27 | 4,46 |
+
+Eşik 0,25'te 166–249 m, tam kare: 0,59 → 0,56. Yanlış alarm 1,18 → 1,21. Yağmurlu gece 166–249 m, tam kare: 0,74 → 0,78 (n=73, ±5 puan).
+
+### Sonuç: hedefe ulaşılmadı (220 m tam kare 0,74, hedef ≥ 0,85)
+
+1. 166–249 m'de fark yok (−1 puan, standart hata ±1,7). 249 m+ bandındaki +7 puan n=55'te istatistiksel olarak anlamlı değil (±6,7, yani 4 araç).
+2. P2 ile bant birlikte de kazanç getirmiyor (0,85 → 0,84). Yani model, dilimlemenin bulduğu uzak araçları kendi P2 kafasıyla bulamıyor.
+3. Bedel: +%33 FLOPs. Gecikme bu çalıştırmada tam kare 43,8 ms ölçüldü. Ölçüm kararsız olduğu için (bkz. Deney 2) temel modelle doğrudan karşılaştırılmadı.
+4. **Sınırlama:** 3 saatlik ince ayar, 11 saatlik temel eğitimle eşit bütçe değil. Yeni dal ve kafa sıfırdan başladı. Uzun eğitimle sonuç değişebilir, ama 3 saatte yakın mesafede temel seviyeye ulaşıp uzakta hiç geçmemesi zayıf bir işaret.
+5. **Yorum:** Dilimlemenin kazancı "daha ince özellik haritası"ndan değil, **girişin büyütülmesinden** geliyor olabilir. 2x büyütmede 8 px'lik araç 16 px olur ve omurganın tüm katmanları onu daha büyük bir nesne olarak işler. P2 ise yalnızca son tespiti ince haritadan yapar. Uzak nesnenin anlamsal özellikleri, sığ stride-4 katmanlarında zayıf kalıyor.
+
+## Deney 5 · Dilimlemenin kazancı nereden geliyor? Tam kare büyütme testi
+
+Temel model, eğitimsiz. Test seti gece karelerinde tam kare, giriş boyutu büyütülerek değerlendirildi (Ultralytics letterbox 1280×720 görüntüyü büyütür). Bant parçaları 2x büyütüldüğü için 2560, ölçek bakımından dilimlemeyle eşit.
+
+### Gece, 166–249 m (n=665), kutu / kutu+ışık
+
+| Çıkarım | Ölçek | Eşik 0,10 | Yanlış alarm | Eşik 0,25 | Yanlış alarm |
+|---|---|---|---|---|---|
+| Tam kare 1280 | 1x | 0,28 / 0,75 | 2,87 | – / 0,59 | 1,18 |
+| Tam kare 1600 | 1,25x | 0,32 / 0,73 | 2,82 | 0,13 / 0,57 | 1,15 |
+| Tam kare 1920 | 1,5x | 0,32 / 0,76 | 2,92 | 0,13 / 0,56 | 1,19 |
+| Tam kare 2560 | 2x | 0,38 / 0,79 | 3,03 | 0,16 / 0,60 | 1,18 |
+| Tam kare 1280 + bant | 2x (bant) | 0,46 / **0,85** | 4,27 | – / **0,72** | 1,75 |
+
+249 m+ (n=55): 1280 0,53, 2560 0,58, bant 0,69. Yakın mesafede 2560 hafif kötüleşiyor: < 31 m kutu 0,93 → 0,90, çünkü büyük araçlar eğitim ölçeğinin dışına çıkıyor.
+
+### Sonuç
+
+1. **Ölçek kazancın küçük bir kısmını açıklıyor.** 2x tam kare, 0,10 eşikte +4 puan veriyor (0,75 → 0,79, ~2 standart hata). Dilimlemenin +10 puanının yaklaşık %40'ı. 0,25 eşikte ölçekten kazanç yok (0,59 → 0,60).
+2. **Kalan kısım parça görüşünden ve iki bakışın birleşiminden geliyor.** Eşit yanlış alarm düzeyinde karşılaştırınca: bant 0,25 eşikte 1,75 yanlış alarmla 0,72 recall veriyor. 2560 tam kare 0,10 eşikte 3,03 yanlış alarmla 0,79, 0,25 eşikte 1,18 yanlış alarmla 0,60. Dilimleme recall–yanlış alarm dengesinde tam kare büyütmeden belirgin şekilde iyi.
+3. **Maliyet:** 2560 tam kare, 1280'in ~4 katı piksel işliyor (çalışma süresi 1600'de 68 sn, 2560'ta 142 sn). Yalnızca bant parçalarını işlemek daha ucuz ve daha iyi.
+4. **Deney 4 ile birlikte yorum:** Uzak mesafe kazancı "modelin daha ince ölçekte bakması"ndan (P2) veya "her şeyin büyütülmesi"nden değil, uzak bölgenin **ayrıca, dar bir kadrajla** incelenmesinden geliyor. Muhtemel sebep: parçada yakın araçların farları ve yansımaları yok, uzak ışıklar göreceli olarak öne çıkıyor.
+
+## Deney 6 · Takip ve bant zamanlaması (video, Faz 4)
+
+**Veri:** MOT 2020 Images kareleri (5 fps). Bu videolar 100K setinin videolarıyla aynı. Etiketli test görüntüsü, videonun 10. saniyesindeki kare. `scripts/prepare_video_eval.py` bu kareyi görüntü benzerliğiyle buldu: 189 videonun 152'sinde tam 51. kare, hepsi test setinden, sızıntı yok. 68 gece videosu kullanıldı. Her videoda etiketli kare ve öncesindeki 15 kare (3 sn) işlendi. Ölçüm etiketli karede yapıldı. Takipçi: `adb/tracking.py` (iki aşamalı eşleştirme, düşük güvenli aday izler, onay için 2 görüş).
+
+### Etiketli kare, güven ≥ 0,10 (araç kutusu veya ışığı)
+
+| Mod | < 62 m (n=450) | 62–125 m (n=194) | 125–249 m (n=40) | Yanlış alarm / kare | Süre / kare |
+|---|---|---|---|---|---|
+| Tam kare | 0,93 | 0,91 | 0,82 | 3,75 | 14,4 ms |
+| Tam + bant | 0,98 | 0,94 | **0,93** | 6,54 | 47,5 ms |
+| Takip · tam | 0,89 | 0,88 | 0,70 | 3,41 | 14,9 ms |
+| Takip · tam + bant | 0,93 | 0,92 | 0,82 | 6,18 | 48,1 ms |
+| Takip · bant iki karede bir | 0,91–0,92 | 0,89–0,92 | 0,80–0,82 | 4,63–4,81 | 31,5 ms |
+
+125–249 m için standart hata ±4–7 puan (n=40). "İki karede bir" satırı, etiketli karede bandın çalıştığı ve çalışmadığı iki durumun aralığı.
+
+### Yanlış alarmların kalıcılığı (tek kare modları, etiketli kare)
+
+| Mod | Eşik | Yanlış alarm | Önceki karede de var | Önceki 2 karede de var |
+|---|---|---|---|---|
+| Tam | 0,10 | 255 | %53 | %31 |
+| Tam | 0,25 | 123 | %63 | %34 |
+| Tam + bant | 0,10 | 445 | %56 | %34 |
+| Tam + bant | 0,25 | 187 | %66 | %42 |
+
+### Sonuç
+
+1. **İlk sürüm yanlış alarmı ikiye katladı** (3,75 → 7,87). Sebep: tahminle sürdürülen yakın araç kutuları ("hayalet" kutular) ve izin taşıdığı eski yüksek güven. v2'de görünmeyen iz yalnızca küçükse (uzak) ve 1 kare çıktıya veriliyor. Çıktı güveni o karedeki tespitin güveni. Tablo v2'nin sonucu.
+2. **Takip yanlış alarm süzgeci olarak zayıf:** −%9 (3,75 → 3,41). Bedeli uzak recall'da: 0,82 → 0,70; bantla 0,93 → 0,82. Yanlış alarmların ~%55–65'i önceki karede de aynı yerde. Tek karelik olanlar ise çoğunlukla kesikli tekrar eden aynı nesneler: sokak lambası, yansıma, BDD'nin etiketlemediği uzak araç. "En az 2 kez gör" kuralı bunları eleyemiyor. Uzak gerçek araçlar da kesikli tespit edildiği için kural onları geciktiriyor.
+3. **Bant iki karede bir:** süre 47,5 → 31,5 ms. Ancak bu örnekte uzak recall bantsız tam kare düzeyinde kaldı (0,80–0,82). Yani zamanlamanın kazancı takibin kaybıyla siliniyor. n=40 olduğu için kesin değil, ama olumlu bir işaret de yok.
+4. **5 fps sınırlaması:** Gerçek kamera 30 fps'te onay 33 ms'de gelir ve kareler arası kayma 6 kat azdır. Takibin recall bedeli burada olduğundan büyük ölçülüyor. Yine de kalıcı yanlış alarmlar kare hızından bağımsız.
+5. **Maske:** Gece şehir karelerinde segmentlerin ~%72'si kısık, ham maskede dakikada ~210–250 segment değişimi var (hedef ≤ 2). Takip bunu çözmüyor. Titreme far kararındaki histerezisin işi.
+
+### Deney 6b · ADB sistem metrikleri (far kararı modülü, `adb/decision.py`)
+
+Far kararı: güven ≥ 0,25, paralaks düzeltmesi, 1° güvenlik payı, 0,5 sn histerezis. 68 gece videosu.
+
+| Mod | Kamaşma ihlali < 62 / 62–125 / 125–249 m | Uzun far kullanımı | Kısık oran | Segment değişimi/dk ham → histerezis | Süre |
+|---|---|---|---|---|---|
+| Tam kare | 0,02 / 0,01 / 0,00 | 0,68 | 0,82 | 181 → 118 | 42 ms |
+| Tam + bant | 0,01 / 0,01 / 0,00 | 0,63 | 0,83 | 209 → 127 | 108 ms |
+| Takip · tam | 0,02 / 0,02 / 0,03 | **0,76** | 0,81 | 151 → 104 | 44 ms |
+| Takip · bant iki karede bir | 0,02 / 0,02–0,03 / 0,03 | 0,74–0,75 | 0,81 | 158 → 103–107 | 77 ms |
+
+(Süreler bu çalıştırmada önceki çalıştırmanın ~3 katı ölçüldü. Dizüstü GPU'da ölçüm kararsız, bkz. Deney 2.)
+
+**Gözlemler:**
+1. **Ölçülen sahneler sistem metriği için uygun değil:** 68 gece videosunun 48'i şehir içi. Segmentlerin %82'si zaten kısık olduğu için kamaşma ihlali her modda neredeyse sıfır. Metrik modları ayırt etmiyor. Gerçek ADB şehir içinde (aydınlatmalı yolda) devre dışıdır.
+2. **Takip uzun far kullanımını artırıyor** (0,68 → 0,76): yanlış alarm kaynaklı gereksiz kısmalar azalıyor. Bedeli: 125–249 m'de 40 aracın 1'i kamaştırıldı (0,00 → 0,03).
+3. **Bant** şehir içinde kamaşmayı azaltmıyor (zaten ~0), yanlış alarmı artırdığı için kullanımı düşürüyor (0,68 → 0,63).
+4. **"Segment değişimi" titreme ölçüsü olarak yanlış:** araç segmentler arasında kayarken oluşan doğal değişimleri de sayıyor. Histerezis bunu %35 azaltıyor, ama hedefle (≤ 2/dk) karşılaştırılamaz. Ölçü değiştirildi: titreme = 1 sn'den kısa süren açılma veya kısılma.
+5. **Sonraki ölçüm:** sahne filtresi eklendi (`scripts/scene_index.py`, `eval_video.py --scenes highway`). Test setindeki 3.363 gece görüntüsünün 1.007'si otoyol. Video setinde 18 otoyol gece videosu var (küçük örnek).
+
+### Deney 6c · Otoyol ve yerleşim alanı (20 gece videosu)
+
+`eval_video.py --scenes highway residential`. Far kararı: güven ≥ 0,25, histerezis 0,5 sn. Titreme: 1 sn'den kısa süren açılma veya kısılma.
+
+| Mod | Recall 125–249 m (n=18) | Yanlış alarm / kare | Kamaşma ihlali < 62 / 62–125 / 125–249 m | Uzun far kullanımı | Titreme/dk ham → histerezis |
+|---|---|---|---|---|---|
+| Tam kare | 0,83 | 4,10 | 0,04 / 0,00 / 0,00 | 0,65 | 74 → 34 |
+| Tam + bant | 0,94 | 7,85 | 0,03 / 0,00 / 0,00 | 0,60 | 110 → 36 |
+| Takip · tam | 0,72 | 3,25 | 0,04 / 0,02 / 0,06 | **0,77** | 45 → 26 |
+| Takip · bant iki karede bir | 0,72–0,83 | 4,90–5,35 | 0,04–0,05 / 0,02–0,05 / 0,06 | 0,76 | 46–61 → 24–29 |
+
+**Gözlemler:**
+1. Otoyolda segmentlerin %67–71'i kısık (şehirde %82). Metrikler modları ayırmaya başlıyor.
+2. **Takip, uzun far kullanımını +12 puan artırıyor** (0,65 → 0,77) ve titremeyi azaltıyor (34 → 26/dk). Bedeli: 18 uzak aracın 1'i kamaştırıldı. Bu örnekte farkın anlamlı olup olmadığı söylenemez.
+3. **Bant** uzak recall'ı artırıyor (0,83 → 0,94, yalnız kutu 0,50 → 0,83), ama kamaşma zaten 0 olduğu için sistem düzeyinde kazanç görünmüyor; yanlış alarm kullanımı düşürüyor. 18 araçla bu soru cevaplanamaz.
+4. **Titreme hedefin çok üstünde** (en iyi 24/dk, hedef ≤ 2). Sıradaki: güven eşiği ve histerezis taraması (`--sweep-conf`, `--sweep-release`) ile kamaşma–kullanım–titreme dengesinin çıkarılması.
+
+### Deney 6d · Far kararı taraması: güven eşiği × histerezis
+
+`eval_video.py --sweep-conf 0.15 0.25 0.35 0.5 --sweep-release 0.5 1 2`. Seçilmiş satırlar (tablonun tamamı çalıştırma çıktısında):
+
+| Sahne | Mod | Güven | Histerezis | Kamaşma ihlali (tümü) | 125 m+ | Uzun far kullanımı | Titreme / dk |
+|---|---|---|---|---|---|---|---|
+| Tüm gece (68) | Tam kare | 0,25 | 0,5 sn | 0,016 (11/686) | 0/42 | 0,68 | 24,3 |
+| Tüm gece (68) | Takip | 0,35 | 0,5 sn | 0,028 (19/686) | 1/42 | 0,77 | 14,0 |
+| Tüm gece (68) | **Takip** | **0,35** | **1,0 sn** | **0,016 (11/686)** | **1/42** | **0,61** | **6,3** |
+| Tüm gece (68) | Takip | 0,35 | 2,0 sn | 0,012 (8/686) | 1/42 | 0,51 | 0,4 |
+| Tüm gece (68) | Takip | 0,5 | 1,0 sn | 0,034 (23/686) | 4/42 | 0,63 | 7,0 |
+| Otoyol + yerleşim (20) | Tam kare | 0,35 | 1,0 sn | 0,021 (4/189) | 0/18 | 0,57 | 3,8 |
+| Otoyol + yerleşim (20) | **Takip** | **0,35** | **1,0 sn** | **0,032 (6/189)** | **1/18** | **0,65** | **1,2** |
+| Otoyol + yerleşim (20) | Takip | 0,35 | 2,0 sn | 0,026 (5/189) | 1/18 | 0,61 | 0,0 |
+
+Not: Bu çalıştırmada kamaşma oranının paydasında far kapsamı (±16°) dışındaki araçlar da vardı. Onlar hiç kamaştırılamayacağı için oranlar olduğundan iyi görünüyor. `glare_and_utilization` düzeltildi, sonraki çalıştırmalar yalnızca kapsam içindeki araçları sayıyor.
+
+**Gözlemler:**
+1. **Titremeyi belirleyen histerezis.** 0,5 → 1,0 sn titremeyi 2–4 kat düşürüyor. 2,0 sn titremeyi neredeyse sıfırlıyor, ama uzun far kullanımı 0,1 puan daha düşüyor. Güven eşiğinin titremeye etkisi daha küçük.
+2. **Güven 0,5 tehlikeli:** uzak kamaşma 1/42'den 4/42'ye çıkıyor. 0,15–0,35 arası benzer.
+3. **Takip her ayarda daha az titreme ve daha yüksek kullanım veriyor** (otoyol, 0,35 / 1,0 sn: titreme 3,8 → 1,2, kullanım 0,57 → 0,65). Bedeli kamaşmada küçük bir artış (4 → 6 / 189).
+4. **Seçilen ayar: takip, güven 0,35, histerezis 1,0 sn.** Otoyolda titreme hedefi (≤ 2/dk) karşılanıyor (1,2). Tüm gecede karşılanmıyor (6,3, şehir içi yoğun). Kamaşma ihlali %1,6–3,2, hedef ≤ %1: **karşılanmıyor.**
+5. **Bant iki karede bir** sistem düzeyinde takip · tam ile aynı sonucu veriyor (otoyolda kamaşma, kullanım ve titreme aynı), ek ~20 ms karşılığında. Uzak araç sayısı (42) farkı göstermeye yetmiyor.

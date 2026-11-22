@@ -89,3 +89,37 @@ Hedef: gece 220 m'de recall 0,75 → 0,90. Dört yöntem denendi.
 - **Gecikme ölçümleri kararsız:** aynı koşulda tam kare 16–44 ms. Dizüstü GPU güç yönetimi ve okuma süresi etkili. Güvenilir ölçüm Faz 5'e (TensorRT) bırakıldı.
 - **Dilimlemenin gecikme bedeli:** Faz 4'te takip ile bandı iki karede bir işleyerek yarıya indirilmesi planlanıyor.
 - **Dilimlemenin yanlış alarm bedeli (+%49):** Faz 4'te kare tutarlılığı şartıyla elenmesi planlanıyor.
+
+## Faz 4 · Takip, far kararı, video değerlendirmesi
+
+**Yapılanlar:** Uzak ve küçük nesnelere uyarlanmış takipçi, paralaks düzeltmeli ve histerezisli far kararı modülü, video üzerinde ADB sistem metrikleri (kamaşma ihlali, uzun far kullanımı, titreme), far kararı parametre taraması.
+
+### Video verisi bulma
+
+| Sorun | Çözüm |
+|---|---|
+| Takip için etiketli video gerekiyordu. BDD'nin MOT 2020 takip etiketleri indirme sayfasında yoktu. İndirilen "Labels" dosyası zaten elimizde olan görüntü etiketleri çıktı. | Etiket dosyasında `timestamp: 10000` görüldü: her etiketli görüntü kendi videosunun 10. saniyesi. Elimizdeki MOT kareleri aynı videolar çıktı. `prepare_video_eval.py` etiketli kareyi görüntü benzerliğiyle buldu: 189 videonun 152'sinde tam 51. kare. |
+| Ham video arşivi 1,8 TB. "Video Parts" ve "Video Torrent" bağlantıları çalışmıyordu. | HTTP Range ile zip'ten tek tek video çeken bir script yazıldı. Sonra MOT kareleri yeterli olduğu için kullanılmadı ve kaldırıldı. |
+| MOT videoları modelin eğitim görüntüleriyle aynı havuzdan geliyor (sızıntı riski). | Her video adı eğitim listesinde arandı. 189 videonun hepsi test setinden çıktı. |
+
+### Takip
+
+| Sorun | Çözüm |
+|---|---|
+| Sahte dedektörle yapılan testte, bant iki karede bir çalışınca uzak araç izi bantsız karede siliniyordu. | Aday izler bir kare görünmeden bekleyebiliyor (`cand_max_age=1`). Test eklendi. |
+| İlk video çalıştırmasında takip yanlış alarmı **ikiye katladı** (3,75 → 7,87). | İki sebep bulundu: (1) eşleşemeyen yakın araç izleri tahmini konumla çıktıda kalıyor ve 5 fps'te aracın dışına düşüyordu ("hayalet" kutular); (2) iz eski yüksek güveni taşıyordu. v2'de görünmeyen iz yalnızca küçükse (uzak) 1 kare çıktıya veriliyor, çıktı güveni o karenin tespit güveni. |
+| v2'de bile takip yanlış alarmı yalnızca %9 azalttı. | **Çözülemedi, ama sebebi ölçüldü:** yanlış alarmların %55–65'i önceki karede de aynı yerde. Sokak lambası, yansıma ve etiketsiz uzak araçlar zamansal süzgeçle elenemez. Görünüşe dayalı doğrulamaya bırakıldı (ADR-016). |
+
+### Far kararı ve metrikler
+
+| Sorun | Çözüm |
+|---|---|
+| Şehir içi gece karelerinde segmentlerin %82'si zaten kısık. Kamaşma ihlali her modda ~0, metrik modları ayırt etmiyor. | Sahne dizini (`scene_index.py`) ve sahne filtresi eklendi. ADB'nin asıl kullanıldığı otoyol ve yerleşim alanı ayrı ölçülüyor. |
+| İlk titreme ölçüsü ("segment değişimi / dk") araç segmentler arasında kayarken oluşan doğal değişimleri de sayıyordu. Hedefle (≤ 2/dk) karşılaştırılamazdı. | Titreme yeniden tanımlandı: 1 sn'den kısa süren açılma veya kısılma. Test eklendi. |
+| Kamaşma oranının paydasında far kapsamı (±16°) dışındaki araçlar da vardı. Oran olduğundan iyi görünüyordu. | Yalnızca kapsam içindeki araçlar sayılıyor. Test eklendi. |
+| Histerezis 0,5 sn ile titreme otoyolda bile 24–34/dk. | Güven eşiği × histerezis taraması yapıldı. Histerezis 1,0 sn ile takipli sistemde otoyol titremesi 1,2/dk (ADR-017). |
+
+### Açık sorunlar (Faz 4)
+- **Kamaşma ihlali %2–3, hedef ≤ %1.** Sebepler ayrıştırılacak: tespit kaçırma mı, düşük güven mi, açı/paralaks hatası mı?
+- **Bantın sistem düzeyindeki etkisi ölçülemedi:** video setinde yalnızca 42 uzak araç var.
+- **Güvenlik izleyici** (kare kaybı, aşırı parlaklık, kirli lens) henüz yazılmadı.

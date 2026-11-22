@@ -81,8 +81,28 @@ Her önemli teknik karar burada kısa olarak kayıt altına alınır: bağlam, k
 ## ADR-013 · Uzak mesafe için öncelik: model içi çözünürlük
 - **Bağlam:** Deney 2 (dilimleme, +10 puan) ve Deney 3 (sözde etiket, +0) birlikte, uzak mesafe darboğazının etiket değil çözünürlük olduğunu gösteriyor.
 - **Karar:** Sonraki recall deneyleri dilimlemenin kazancını modelin içine taşımayı hedefler: (1) P2 tespit kafası (stride 4) ve/veya (2) büyütülmüş bant parçalarıyla eğitim (SAHI ince ayarı). Başarı ölçütü: tam kare çıkarımla 220 m'de ≥ 0,85, yani dilimlemenin seviyesine gecikme bedeli olmadan ulaşmak.
-- **Deney 4 tasarımı (P2 kafası):** `configs/yolo11s-p2.yaml`. YOLO11s'e backbone P2/4 çıktısı bağlanır, Detect dört ölçekte çalışır. Backbone ve ilk FPN katmanları `yolo11s.pt`'den aktarılır (297/593 öğe), yeni katmanlar rastgele başlar. Etiketler, eğitim listesi, süre (11 saat, Kaggle 2×T4) ve batch (16) temel modelle aynı. Değerlendirme aynı test seti ve scriptlerle.
-  - **Maliyet (yerel ölçüm, 1280 px):** 9,46 → 9,58 M parametre, 88,8 → 117,9 GFLOPs (+%33). Yalnız ağ gecikmesi FP16 7,3 → 10,0 ms (RTX 5050). Bant dilimleme ~2 kat ekliyordu. Eğitim belleği +%52.
-  - **Karıştırıcı:** Aynı süre sınırında P2 modeli ~%25 daha az epoch görür. Sonuç temel modelden kötü çıkarsa önce bu kontrol edilir (epoch sayısı raporlanır).
-  - **Uygulama notu:** Çift GPU'da (DDP) Ultralytics modeli alt süreçte yaml'dan yeniden kurar. Ağırlıklar bu yüzden `.load()` ile değil `train(pretrained=...)` ile verilir, aksi halde model sıfırdan eğitilir.
-- **Paralel:** Yanlış alarmı (~2,9/kare) düşürmek için VLM ile ışık etiketi doğrulama (Deney 4 adayı).
+- **Paralel:** Yanlış alarmı (~2,9/kare) düşürmek için VLM ile ışık etiketi doğrulama (Deney 5 adayı).
+- **Uygulama (Deney 4):** `configs/models/yolo11s-p2.yaml`, YOLO11 boynuna stride-4 dalını ekler (katman 2 ile birleşim, P2–P5 dört çıkış). Ölçülen bedel: 9,46M → 9,58M parametre, 88,8 → 117,9 GFLOPs @1280 (+%33), eğitim belleği ~1,47 kat. Omurga yolo11s.pt'den aktarılır. DDP'de alt süreçler modeli yaml'dan yeniden kurduğu için ağırlıklar `pretrained=` ile verilir, `.load()` ile değil.
+
+## ADR-014 · P2 kafası benimsenmedi; sıradaki test girişi büyütmek
+- **Bağlam:** Deney 4'te P2 kafası (3 saat ince ayar) 220 m'de tam kare recall'ı değiştirmedi (0,75 → 0,74), hesap maliyetini ise %33 artırdı.
+- **Karar:** Varsayılan model temel YOLO11s olarak kalır. P2 uzun eğitimle yeniden denenmeyecek, önce daha ucuz bir ayırt edici test yapılacak.
+- **Sıradaki:** Eğitimsiz bir test. Temel model tam karede daha büyük girişle (imgsz 1600 / 1920) değerlendirilecek. Kazanç büyütmeden geliyorsa bu test dilimlemeye yakın recall verir. O zaman seçenekler: bant parçalarıyla ince ayar (SAHI eğitimi) veya yalnızca ufuk bandının büyütüldüğü tek geçişli giriş. Vermiyorsa kazanç parça bağlamından (dar görüş, daha az dikkat dağıtıcı) geliyordur.
+
+## ADR-015 · Uzak mesafe için dilimleme kalıcı; maliyet takip ile düşürülecek
+- **Bağlam:** Deney 4 (P2: +0) ve Deney 5 (2x tam kare büyütme: +4 puan, 4 kat maliyet) dilimlemenin +10 puanını tek geçişli modele taşıyamadı. Dilimleme eşit yanlış alarmda da daha iyi.
+- **Karar:** Uzak mesafe algılaması ufuk bandı dilimlemesiyle yapılır. ADR-013'teki "kazancı model içine taşıma" hedefi bırakıldı. Bant parçalarıyla ince ayar (SAHI eğitimi) ileride, eğitim kotası olunca tekrar ele alınabilir, çünkü kanıt doğrudan parça görüşünü işaret ediyor.
+- **Sonraki:** Faz 4. Takip (ByteTrack) ile (1) bandı her karede değil, iki karede bir veya yalnızca gerektiğinde işleyerek gecikmeyi düşürmek, (2) tek karelik yanlış alarmları kare tutarlılığıyla elemek. Eğitim gerektirmez, yerelde yapılır.
+
+## ADR-016 · Takip yanlış alarm süzgeci değil; yanlış alarm görünüşle, titreme histerezisle çözülecek
+- **Bağlam:** Deney 6'da takip yanlış alarmı yalnızca %9 azalttı, uzak recall'ı 11–12 puan düşürdü. Yanlış alarmların çoğu sahnede kalıcı ya da kesikli tekrar eden nesneler.
+- **Karar:** Takipçi far kararı için tutuluyor (kimlik, hız, öngörü, bantsız karede uzak izi taşıma), ama tespit çıktısını süzmek için kullanılmıyor. Değerlendirmelerde "takip" ayrı mod olarak raporlanmaya devam ediyor.
+- **Yanlış alarm için:** Görünüşe dayalı doğrulama (ışık/araç adayı kırpıntısını sınıflandıran küçük bir model; etiketleri VLM ile). Ayrıca ODD: ADB şehir içinde zaten devre dışı. Asıl hedef aydınlatmasız yol.
+- **Titreme için:** Far kararı modülünde histerezis (`decision.release_delay_s`). Sistem metrikleri artık nesne düzeyinde değil, ADB düzeyinde ölçülecek: kamaşma ihlali (araç açık segmentte mi), uzun far kullanımı, dakikadaki segment değişimi.
+- **Bant zamanlaması:** Karar ertelendi. 30 fps veri olmadan "iki karede bir" ile "her kare" ayırt edilemiyor.
+
+## ADR-017 · Far kararı varsayılanları: takip, güven 0,35, histerezis 1,0 sn
+- **Bağlam:** Deney 6d'de 4 güven eşiği × 3 histerezis süresi tarandı. Titremeyi belirleyen histerezis. Güven 0,5 uzak kamaşmayı artırıyor.
+- **Karar:** `decision.release_delay_s` 0,5 → 1,0 sn. `min_confidence` 0,35 kalıyor. Far kararı takipçi çıktısıyla çalışır.
+- **Sonuç:** Otoyolda titreme 1,2/dk (hedef ≤ 2), uzun far kullanımı 0,65. Kamaşma ihlali %1,6–3,2: hedef (≤ %1) karşılanmıyor. Sebepler ayrıştırılacak: tespit kaçırma mı, açı/paralaks hatası mı, güvenlik payı mı?
+- **Sınırlama:** 5 fps veri. Histerezis saniye cinsinden olduğu için 30 fps'e taşınabilir, ama onay ve kayıp davranışı değişir. Etiket yalnızca videonun bir karesinde.
