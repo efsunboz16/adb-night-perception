@@ -19,7 +19,7 @@ headlamp:
 
 decision:
   margin_deg: 1.0          # kutu açısına her iki yanda eklenen güvenlik payı
-  release_delay_s: 0.5     # araç kaybolduktan sonra segmenti açmadan önce bekleme (histerezis)
+  release_delay_s: 1.0     # araç kaybolduktan sonra segmenti açmadan önce bekleme (histerezis; ADR-017)
   min_confidence: 0.35     # bu güvenin altındaki tespitler kararda kullanılmaz
   predict_ahead_ms: 50     # takip hızıyla bu kadar ileriyi öngör (gecikme telafisi)
 
