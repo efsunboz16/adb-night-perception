@@ -275,3 +275,36 @@ Not: Bu çalıştırmada kamaşma oranının paydasında far kapsamı (±16°) d
 3. **Takip her ayarda daha az titreme ve daha yüksek kullanım veriyor** (otoyol, 0,35 / 1,0 sn: titreme 3,8 → 1,2, kullanım 0,57 → 0,65). Bedeli kamaşmada küçük bir artış (4 → 6 / 189).
 4. **Seçilen ayar: takip, güven 0,35, histerezis 1,0 sn.** Otoyolda titreme hedefi (≤ 2/dk) karşılanıyor (1,2). Tüm gecede karşılanmıyor (6,3, şehir içi yoğun). Kamaşma ihlali %1,6–3,2, hedef ≤ %1: **karşılanmıyor.**
 5. **Bant iki karede bir** sistem düzeyinde takip · tam ile aynı sonucu veriyor (otoyolda kamaşma, kullanım ve titreme aynı), ek ~20 ms karşılığında. Uzak araç sayısı (42) farkı göstermeye yetmiyor.
+
+## Deney 7 · Kamaşma ihlali teşhisi (`eval/diagnose_glare.py`)
+
+68 gece videosu. Takip açık, far kararı güven ≥ 0,35, histerezis 1,0 sn. Etiketli karede far kapsamındaki 550 aracın 11'i açık bir segmentte kaldı (%2,0). Her ihlal sebebine göre gruplandı ve görseli çıkarıldı. "Işıklı araç": kutusunun alt %75'inde parlak nokta (gri ≥ 200) olan araç, yani lambası yanan ve içinde sürücü olan, ADB'nin korumakla yükümlü olduğu araç.
+
+| Araç | Far kapsamında | İhlal | Oran | Görülmedi | Düşük güven | Takip onayı | Yalnız ışık | Geometri |
+|---|---|---|---|---|---|---|---|---|
+| Işıklı | 374 | 5 | **%1,3** | 2 | 2 | 1 | 0 | 0 |
+| Işıksız (park etmiş) | 176 | 6 | %3,4 | 4 | 2 | 0 | 0 | 0 |
+
+**Gözlemler:**
+1. **Geometri hatası sıfır.** Model bir aracı eşiğin üstünde bulduğunda doğru segment her seferinde kısıldı. Açı dönüşümü, paralaks düzeltmesi ve 1° güvenlik payı doğrulandı. Tüm ihlaller tespit kaynaklı.
+2. **İhlallerin yarısından fazlası ışıksız, park etmiş araçlarda.** Kamaşacak sürücü yok. BDD bu araçları da etiketlediği için ölçülen %2,0 olduğundan kötü görünüyordu. ADB için asıl oran ışıklı araçlarda: %1,3 (hedef ≤ %1, n=374, ±0,6).
+3. **Işıklı araç ihlallerinin 4/5'i iki videodan, ikisinde de görüntü bozuk:** b1e2346e'de ön camda su damlası, leke ve buğu var, uzak farlar dağınık lekeye dönüşmüş. b24380ab'de kamera sarsıntısından aşırı hareket bulanıklığı var, her ışık uzun bir iz bırakmış. Bu durumlar REQ-S-02 kapsamında: görüntü bozuksa uzun far kapanmalı. Güvenlik izleyici bu iki videoyu yakalarsa ışıklı araç ihlali 1/374'e (%0,3) düşer.
+4. **Işıklı araç tespiti görüntüden yapılıyor:** test etiketlerinde lamba sınıfı yok. Yansımalı park etmiş araçlar "ışıklı" sayılabilir. Görsel kontrolde 5 ışıklı ihlalin 4'ü gerçekten lambası yanan araçtı.
+5. **Sıradaki:** güvenlik izleyici. Bulanıklık eşiği (`system.yaml` → `blur_laplacian_min: 15`) tahmindi. `eval/calibrate_safety.py` ile veriden belirlenecek.
+
+## Deney 8 · Güvenlik izleyici: bulanıklık / kirli cam algılanabilir mi? (`eval/calibrate_safety.py`)
+
+Deney 7'de ışıklı araç ihlallerinin 4/5'i iki bozuk videodan geldi: b1e2346e'de ıslak ve lekeli ön cam, b24380ab-63272e5a'da kamera sarsıntısı. REQ-S-02'ye göre görüntü bozuksa uzun far kapanmalı. 68 gece videosunda dört görüntü kalitesi ölçüsü denendi. Tabloda bozuk videoların, bozulma yönündeki sırası var (1 = en bozuk görünen).
+
+| Ölçü | Islak cam · 6 kare ortancası | Islak cam · yalnız etiketli kare | Sarsıntı · 6 kare ortancası | Sarsıntı · yalnız etiketli kare |
+|---|---|---|---|---|
+| Keskinlik (Laplace varyansı, düşük) | 14 | 10 | 21 | 33 |
+| Parlak kenar enerjisi (düşük) | 12 | 12 | 34 | 68 |
+| Işık lekesi uzaması (yüksek) | **4** | 65 | 22 | **5** |
+| Hale oranı (yüksek) | 34 | 4 | 58 | 59 |
+
+**Sonuç: olumsuz.**
+1. **Genel keskinlik ölçüleri işe yaramıyor.** Hareket bulanıklığı ışıkları yumuşatmıyor, keskin kenarlı çizgilere çeviriyor. Sarsıntılı video parlak kenar ölçüsünde en keskin video çıktı (68/68).
+2. **Işık lekesi uzaması** iki bozulmayı da bir ölçüm ayarında yakalıyor, ama aynı ayarda ikisini birden değil. Islak camı 6 karenin ortancası, sarsıntıyı tek kare yakalıyor. İki bozulma da anlık ve kareden kareye değişiyor.
+3. **Yalnızca 2 bozuk örnek var.** Bu iki videoya göre seçilen bir eşik verinin rastlantısına uyar, genellenmez.
+4. **Karar:** Bulanıklık kontrolü kapalı (`blur_laplacian_min: null`). REQ-S-02'nin bulanıklık kısmı açık. Gerçek çözüm muhtemelen etiketli bozuk görüntülerle eğitilmiş bir görüntü kalitesi sınıflandırıcısı ya da yağmur sensörü / silecek durumu gibi araç sinyalleri. Kamaşma hedefi (ışıklı araçlarda ≤ %1) bu yüzden karşılanmıyor: %1,3.

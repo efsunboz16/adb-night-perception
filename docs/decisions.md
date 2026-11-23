@@ -106,3 +106,8 @@ Her önemli teknik karar burada kısa olarak kayıt altına alınır: bağlam, k
 - **Karar:** `decision.release_delay_s` 0,5 → 1,0 sn. `min_confidence` 0,35 kalıyor. Far kararı takipçi çıktısıyla çalışır.
 - **Sonuç:** Otoyolda titreme 1,2/dk (hedef ≤ 2), uzun far kullanımı 0,65. Kamaşma ihlali %1,6–3,2: hedef (≤ %1) karşılanmıyor. Sebepler ayrıştırılacak: tespit kaçırma mı, açı/paralaks hatası mı, güvenlik payı mı?
 - **Sınırlama:** 5 fps veri. Histerezis saniye cinsinden olduğu için 30 fps'e taşınabilir, ama onay ve kayıp davranışı değişir. Etiket yalnızca videonun bir karesinde.
+
+## ADR-018 · Bulanıklık / kirli cam kontrolü devre dışı
+- **Bağlam:** Deney 8'de dört basit görüntü kalitesi ölçüsü iki bozuk videoyu (ıslak cam, sarsıntı) tutarlı şekilde ayırmadı. Uzama ölçüsü her birini ayrı ayarda yakaladı, ikisini birden değil. Pozitif örnek sayısı 2.
+- **Karar:** `safety_monitor.blur_laplacian_min: null`. Kalibre edilmemiş bir eşikle uzun farı kapatmak, ya hiçbir şey yakalamaz ya da sağlam videolarda sebepsiz kısa fara düşer. Diğer iki kontrol (kare gecikmesi, aşırı parlaklık) kalıyor.
+- **Sonuç:** REQ-S-02'nin bulanıklık kısmı ve kamaşma hedefi (ışıklı araç ≤ %1, ölçülen %1,3) açık. İleride: etiketli bozuk görüntülerle eğitilmiş kalite sınıflandırıcı veya araç sinyalleri (yağmur sensörü, silecek).
