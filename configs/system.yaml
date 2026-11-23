@@ -27,7 +27,7 @@ safety_monitor:
   # Bu durumlardan biri olursa tüm uzun far kapanır (kısa fara dönüş)
   max_frame_gap_ms: 200          # kamera karesi gelmezse
   max_mean_brightness: 0.85      # görüntü aşırı parlaksa (0-1, ör. aydınlık şehir içi)
-  blur_laplacian_min: 15.0       # lens kirli/bulanıksa (Laplace varyansı)
+  blur_laplacian_min: null       # lens kirli/bulanıksa: KAPALI. Basit ölçülerle güvenilir eşik bulunamadı (Deney 8, ADR-018)
 
 targets:                  # başarı ölçütleri; eval/ bu değerlerle PASS/FAIL raporlar
   oncoming_range_m: 220   # karşıdan gelen araç bu mesafeden itibaren algılanmalı (NHTSA test aralığı)

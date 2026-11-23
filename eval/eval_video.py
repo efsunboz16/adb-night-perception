@@ -34,6 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "eval"))
 from adb.decision import BeamController, glare_and_utilization  # noqa: E402
+from adb.safety import SafetyMonitor  # noqa: E402
 from adb.geometry import load_config  # noqa: E402
 from adb.tracking import GROUPS, Tracker, _grow, iou_matrix  # noqa: E402
 from eval_distance import BINS, LIGHTS, VEH, accumulate, new_stats, read_gt  # noqa: E402
@@ -133,6 +134,7 @@ def main():
     dimfrac = {m: [] for m in MODES}
     glare = {m: {"n": np.zeros(len(SUMMARY_BINS), int), "v": np.zeros(len(SUMMARY_BINS), int)} for m in MODES}
     util = {m: [0, 0] for m in MODES}
+    safety_off, safety_n, safety_why = 0, 0, {}
     sweep_modes = ["tam", "takip·tam", "takip·bant/2·yok"]
     sweep = {}
     if a.sweep_conf or a.sweep_release:
@@ -150,9 +152,10 @@ def main():
         frames = sorted(fdir.glob(f"{name}-*.jpg"))
         key = v["key_index"]
         seq = frames[max(0, key - a.warmup):key + 1]
-        dets = []
+        dets, means = [], []
         for f in seq:
             img = cv2.imread(str(f))
+            means.append(float(img.mean()) / 255.0)
             s0 = time.perf_counter()
             full = predict_full(model, img, min_conf, a.imgsz)
             s1 = time.perf_counter()
@@ -194,7 +197,16 @@ def main():
             accumulate(stats[m], gt, *outs[m][-1], a.conf, a.iou, gt_all=gt_all)
             ham, his = BeamController(sysc, a.mask_conf, 0.0), BeamController(sysc, a.mask_conf, a.release)
             m_ham = [ham.step(*o, i / a.fps) for i, o in enumerate(outs[m])]
-            m_his = [his.step(*o, i / a.fps) for i, o in enumerate(outs[m])]
+            sm = SafetyMonitor(sysc)                                      # REQ-S-01/02: bozuk girdide kısa far
+            m_his = []
+            for i, o in enumerate(outs[m]):
+                ok = sm.frame(i / a.fps, mean01=means[i])
+                m_his.append(SafetyMonitor.apply(his.step(*o, i / a.fps), ok))
+                if m == "tam" and i >= 3:
+                    safety_n += 1
+                    safety_off += not ok
+                    for r in sm.reasons:
+                        safety_why[r] = safety_why.get(r, 0) + 1
             for key_, ms in (("ham", m_ham[3:]), ("his", m_his[3:])):          # ilk 3 kare ısınma
                 toggles[m][key_] += short_runs(ms, max(1, round(a.flicker_s * a.fps)))
             dimfrac[m] += [x.mean() for x in m_his[3:]]
@@ -276,6 +288,10 @@ def main():
         out["glare"][m] = {"n": g["n"].tolist(), "ihlal": g["v"].tolist()}
         print(f"| {m} | {gv} | {ut:.2f} | {df:.2f} | {tr:.0f} | {th:.0f} | {cost[m]:.1f} |")
     print("| n (araç) | " + " / ".join(str(x) for x in glare["tam"]["n"]) + " | | | | | |")
+    print(f"\nGüvenlik izleyici: karelerin %{100 * safety_off / max(safety_n, 1):.1f}'inde uzun far kapattı "
+          f"({safety_off}/{safety_n}). Sebepler: {safety_why or 'yok'}. Bulanıklık kontrolü: "
+          f"{'kapalı (ADR-018)' if sysc['safety_monitor'].get('blur_laplacian_min') is None else 'açık'}.")
+    out["safety"] = {"off_frames": safety_off, "frames": safety_n, "reasons": safety_why}
     print("\n### Yanlış alarmlar kalıcı mı? (tek kare modlarında, key karedeki yanlış alarmların\n"
           "### kaçı önceki karelerde de aynı yerde tespit edilmiş)\n")
     print("| Mod | Eşik | Yanlış alarm (toplam) | Önceki 1 karede de var | Önceki 2 karede de var |")
