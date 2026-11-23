@@ -119,7 +119,17 @@ Hedef: gece 220 m'de recall 0,75 → 0,90. Dört yöntem denendi.
 | Kamaşma oranının paydasında far kapsamı (±16°) dışındaki araçlar da vardı. Oran olduğundan iyi görünüyordu. | Yalnızca kapsam içindeki araçlar sayılıyor. Test eklendi. |
 | Histerezis 0,5 sn ile titreme otoyolda bile 24–34/dk. | Güven eşiği × histerezis taraması yapıldı. Histerezis 1,0 sn ile takipli sistemde otoyol titremesi 1,2/dk (ADR-017). |
 
-### Açık sorunlar (Faz 4)
-- **Kamaşma ihlali %2–3, hedef ≤ %1.** Sebepler ayrıştırılacak: tespit kaçırma mı, düşük güven mi, açı/paralaks hatası mı?
+### Kamaşma teşhisi ve güvenlik izleyici
+
+| Sorun | Çözüm |
+|---|---|
+| Kamaşma ihlali %2, hedef ≤ %1. Sebebi bilinmiyordu. | `diagnose_glare.py`: her ihlal 5 sebep grubuna ayrıldı ve görseli çıkarıldı. **Geometri hatası 0 çıktı.** Far hesabı doğrulandı, tüm ihlaller tespit kaynaklı. |
+| Görsellerde ihlallerin çoğu ışıkları kapalı, park etmiş araçlardı. Kamaşacak sürücü yok. | Araçlar "lambası yanan" ve "ışıksız" diye ayrıldı. İlk denemede tüm araçlar ışıksız çıktı: test etiketlerinde lamba sınıfı yoktu, bu kontrol edilmeden varsayılmıştı. Lamba görüntüden ölçüldü (kutunun alt %75'inde parlak nokta). Lambası yanan araçlarda oran %1,3. |
+| Lambası yanan araç ihlallerinin 4/5'i iki bozuk videodan: ıslak ön cam, kamera sarsıntısı. | Güvenlik izleyicinin bulanıklık kontrolü için eşik veriden aranmaya çalışıldı (`calibrate_safety.py`). |
+| Keskinlik ve parlak kenar ölçüleri bozuk videoları ayırmadı. Sarsıntılı video "en keskin" videolardan biri çıktı. | Hareket bulanıklığı ışıkları keskin kenarlı çizgilere çeviriyor. Işık lekesi uzaması ve hale oranı eklendi. Uzama her bozulmayı ayrı bir ayarda yakaladı, ikisini birden hiçbir ayarda yakalamadı. |
+| Yalnızca 2 bozuk örnek var. Eşik seçilirse veriye uydurulmuş olur. | **Çözülemedi.** Bulanıklık kontrolü kapalı bırakıldı (ADR-018). Kare gecikmesi ve aşırı parlaklık kontrolleri yazıldı (`adb/safety.py`), arıza sonrası 1 sn toparlanma süresiyle. |
+
+### Açık sorunlar (Faz 4 sonu)
+- **Kamaşma ihlali, lambası yanan araçlarda %1,3, hedef ≤ %1.** Sebebi büyük ölçüde bozuk görüntü. Bozuk görüntü algılama çözülemedi.
 - **Bantın sistem düzeyindeki etkisi ölçülemedi:** video setinde yalnızca 42 uzak araç var.
-- **Güvenlik izleyici** (kare kaybı, aşırı parlaklık, kirli lens) henüz yazılmadı.
+- **5 fps veri:** gerçek kamera 30 fps. Takip ve histerezis davranışı gerçek hızda tekrar ölçülmeli.
