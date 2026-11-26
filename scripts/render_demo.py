@@ -123,6 +123,10 @@ def main():
     ap.add_argument("--fps", type=float, help="kare klasörü için (BDD MOT: 5)")
     ap.add_argument("--hfov", type=float, help="kendi kameranın yatay görüş açısı (derece)")
     ap.add_argument("--max-frames", type=int, default=0)
+    ap.add_argument("--stride", type=int, default=0,
+                    help="her N karede bir işle; boş: 30 fps'ten yüksek videolar 30 fps'e indirilir "
+                         "(takip parametreleri kare cinsinden, FM-08)")
+    ap.add_argument("--start", type=float, default=0.0, help="başlangıç saniyesi")
     ap.add_argument("--no-band-overlay", action="store_true")
     a = ap.parse_args()
 
@@ -136,6 +140,8 @@ def main():
     sl = load_slicing()
     full, band = load_detectors(a.weights, a.band_weights, backend=a.backend)
     gen, fps, name = frames_from(a.source, a.fps)
+    stride = a.stride or max(1, round(fps / 30.0))
+    fps_in, fps = fps, fps / stride
     out = a.out or ROOT / "runs/demo" / f"{name}.mp4"
     out.parent.mkdir(parents=True, exist_ok=True)
     vw = cv2.VideoWriter(str(out), cv2.VideoWriter_fourcc(*"mp4v"), fps, (W, H))
@@ -143,10 +149,12 @@ def main():
     bc = BeamController(cfg, cfg["decision"]["min_confidence"])
     y0, y1 = (int(round(v * H)) for v in sl["band_frac"])
     lat, n = [], 0
-    print(f"{name}: {fps:.0f} fps, {full.describe()} -> {out}")
-    for i, img in enumerate(gen):
-        if img is None:
+    print(f"{name}: {fps_in:.0f} fps -> {fps:.0f} fps işleniyor, {full.describe()} -> {out}")
+    i = -1
+    for k, img in enumerate(gen):
+        if img is None or k % stride or k / fps_in < a.start:
             continue
+        i += 1
         if img.shape[:2] != (H, W):
             img = cv2.resize(img, (W, H), interpolation=cv2.INTER_AREA)
         t = i / fps
