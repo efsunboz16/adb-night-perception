@@ -174,3 +174,15 @@ Hedef: gece 220 m'de recall 0,75 → 0,90. Dört yöntem denendi.
 |---|---|
 | C++ hattı ~1–1,5 hafta ve Windows derleme ortamı gerektiriyordu; asıl ihtiyaç iki sayıydı (REQ-P-05/06). | C++'ın kazandıracağı işler Python'da yapıldı: kare GPU'ya 8 bit bir kez, dolgu ve bant parçaları GPU'da, motorlar TensorRT Python API'si ve CUDA Graph ile, NMS GPU'da (`adb/trt_runtime.py`). Bant her karede p95 81 → 20 ms. C++ gelecek çalışma. |
 | GPU hattı tam karede +%13 yanlış alarm verdi; aynı motor, aynı görüntüler. | `eval/compare_backends.py` farkı adım adım ayırdı: ön işleme, CUDA Graph, son işleme aynıydı. Fark Ultralytics `predict`'in NMS IoU eşiğindeydi (0,5, varsayılan sanılan 0,7 değil). Eşitlenince tam kare çıktısı birebir aynı. Ders: "varsayılan" bir değeri kaynağından okumadan kopyalamamak. |
+
+## Faz 6 · Doğrulama, FMEA, demo
+
+**Yapılanlar:** gereksinim doğrulama matrisi (`eval/verify_requirements.py` → docs/verification.md), FMEA (docs/fmea.md), hat düzeyinde gereksinim ve hata enjeksiyonu testleri (`tests/test_requirements.py`), demo videosu üreticisi (`scripts/render_demo.py`).
+
+| Sorun | Çözüm |
+|---|---|
+| Faz 4'ün sistem metrikleri (titreme 1,2/dk, kullanım 0,65) "takip · tam kare" modunda ölçülmüştü. Dağıtılan yapılandırma artık takip + tam kare + bant her karede. | Son ölçümler dağıtılan modda tekrarlanıyor (`takip·tam+bant`, GPU hattı). |
+| `eval_video.py`'nin far kararı eşiği varsayılanı 0,25'te kalmıştı, sistem 0,35 kullanıyor (ADR-017). | Varsayılan artık `system.yaml`'dan okunuyor. |
+| Doğrulama sırasında iki gereksinimin kodda karşılığı olmadığı görüldü: REQ-F-08 (50 ms öngörü) yapılandırmada var ama kullanılmıyor; REQ-S-03 (eşik altı tespit bölgesini kısma) ADR-017'deki eşik kararıyla çelişiyor. | Matriste "uygulanmadı" ve "kaldı" olarak, sebepleriyle yazıldı; riskleri FMEA'da (FM-05, FM-04) hesaplandı. Sapmayı belgeleyen test eklendi. |
+| REQ-P-03 (kısma tepki süresi) video verisiyle ölçülemiyor: videoda tek etiketli kare var. | Tepki analitik olarak ayrıştırıldı: takip onayı (1 kare) + hat gecikmesi p95. Onay davranışı testle doğrulandı. |
+| Takip parametreleri kare cinsinden ve 5 fps veriyle ayarlı; 30 fps'te iz 0,1 s'de düşer. | FMEA'ya yazıldı (FM-08). Far kararındaki 1 sn histerezis etkisini kapatıyor (testli). |

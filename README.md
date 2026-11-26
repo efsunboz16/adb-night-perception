@@ -259,6 +259,8 @@ adb-night-perception/
 | [literature.md](docs/literature.md) | SmartBeam, PVDN, 2PCNet, SAHI vb. ve projeye katkıları |
 | [results.md](docs/results.md) | Deney sonuçları ve gözlemler (Deney 1–8) |
 | [devlog.md](docs/devlog.md) | Geliştirme günlüğü: karşılaşılan sorunlar, çözümler, çözülemeyenler |
+| [verification.md](docs/verification.md) | Gereksinim doğrulama matrisi: her REQ için hedef, ölçülen, durum, kanıt (`eval/verify_requirements.py`) |
+| [fmea.md](docs/fmea.md) | Hata türleri ve etkileri analizi: 13 hata türü, şiddet × olasılık × tespit, önlemler |
 
 ## Yol haritası
 
@@ -270,7 +272,7 @@ adb-night-perception/
 | 3 | Uzak araç iyileştirmesi: dilimleme ✅, sözde etiketleme ❌, P2 kafası ❌, giriş büyütme ⚠️ | ✅ |
 | 4 | Takip ✅, far kararı ✅, video üzerinde sistem metrikleri ✅, kamaşma teşhisi ✅, güvenlik izleyici ✅ (bulanıklık hariç) | ✅ |
 | 5 | TensorRT FP16 motorları ✅, doğruluk eşitliği ✅, GPU'da ön/son işleme + CUDA Graph ✅ (p95 20 ms), INT8 (ertelendi), C++ ve Jetson (gelecek çalışma) | ✅ |
-| 6 | Doğrulama, FMEA, demo videosu | ⏳ |
+| 6 | Doğrulama matrisi, FMEA ✅, hata enjeksiyonu testleri ✅, son ölçümler ⏳, demo videosu ⏳ | 🔄 |
 
 ## Bilinen sınırlamalar
 

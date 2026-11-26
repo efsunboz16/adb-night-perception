@@ -99,7 +99,8 @@ def main():
     ap.add_argument("--conds", nargs="+", default=["night", "night_adverse"])
     ap.add_argument("--warmup", type=int, default=15, help="key'den önce işlenecek kare (5 fps: 15 = 3 sn)")
     ap.add_argument("--conf", type=float, nargs="+", default=[0.1, 0.25])
-    ap.add_argument("--mask-conf", type=float, default=0.25, help="far kararı için güven eşiği")
+    ap.add_argument("--mask-conf", type=float, default=None,
+                    help="far kararı için güven eşiği (boş: system.yaml decision.min_confidence, ADR-017)")
     ap.add_argument("--release", type=float, default=None, help="histerezis süresi (sn); boş: system.yaml")
     ap.add_argument("--sweep-conf", type=float, nargs="+", help="far kararı güven eşiği taraması, ör. 0.15 0.25 0.35 0.5")
     ap.add_argument("--sweep-release", type=float, nargs="+", help="histerezis taraması (sn), ör. 0.5 1 2")
@@ -128,6 +129,8 @@ def main():
         sys.exit(f"{a.videos} içinde {a.conds} videosu yok.")
     cfg = load_slicing(ROOT / "configs/slicing.yaml")
     sysc = load_config()
+    if a.mask_conf is None:
+        a.mask_conf = float(sysc["decision"]["min_confidence"])
     model, band_model = load_detectors(a.weights, a.band_weights, a.imgsz, backend=a.backend)
     print(f"Tam kare: {model.describe()} | bant: {band_model.describe()}")
     min_conf = min(a.conf)

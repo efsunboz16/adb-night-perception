@@ -224,6 +224,12 @@ def main():
         print(f"| **{'ışıklı' if lt else 'ışıksız'}** | **toplam** | {ntot} | {sum(tot.values())} | "
               f"**{sum(tot.values()) / max(ntot, 1):.3f}** | " + " | ".join(str(tot[k]) for k in CATS) + " |")
     (out_dir / "summary.json").write_text(json.dumps(rows, indent=1, ensure_ascii=False), encoding="utf-8")
+    rates = {"mode": a.mode, "conf": thr, "release_s": ref.release, "videos": len(vids), "backend": a.backend}
+    for lt, key in ((True, "lit"), (False, "unlit")):
+        rates[key] = {"n": sum(n_in[(d, lt)] for d, _, _ in DIST),
+                      "violations": sum(sum(cats[(d, lt)].values()) for d, _, _ in DIST),
+                      "by_cause": dict(sum((cats[(d, lt)] for d, _, _ in DIST), Counter()))}
+    (out_dir / "rates.json").write_text(json.dumps(rates, indent=1, ensure_ascii=False), encoding="utf-8")
     print(f"\nGörseller: {out_dir}  ({len(rows)} adet)")
 
 
