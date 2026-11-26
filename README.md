@@ -3,8 +3,8 @@
 **Gece sürüşü için kamera tabanlı adaptif uzun far (ADB) algılama sistemi.** Tek bir ön kameradan araçları, farları ve arka lambaları algılar; uzun farı açık tutarken yalnızca diğer yol kullanıcılarının bulunduğu açı dilimlerini karartan 16 segmentlik bir far maskesi üretir. Gerçek zamanlı çalışır: RTX 5050 dizüstü GPU'da uçtan uca **20 ms** (p95).
 
 <p align="center">
-  <img src="docs/media/demo.gif" width="760" alt="ADB demo: tespitler, iz numaraları, üstte 16 segmentlik far maskesi, sağ altta kuşbakışı far yelpazesi">
-  <br><sub>Üstteki şerit far maskesi (sarı: uzun far açık, koyu: kısık), sağ alttaki yelpaze aynı kararın kuşbakışı görünümü. Görüntü: Pexels (video 15119004). Bu video modelin eğitim verisinden farklı bir kameradan; açılar yaklaşık.</sub>
+  <img src="docs/media/demo.gif" width="760" alt="ADB demo: karşıdan gelen araç yaklaşırken kısılan segmentler onunla birlikte kayıyor">
+  <br><sub>Aydınlatmasız iki şeritli yol, karşıdan bir araç geliyor. Araç uzakta tek bir ışık noktasıyken ortadaki segmentler kısılıyor; yaklaşıp sola geçtikçe kısılan dilim onunla birlikte kayıyor; geçtikten 1 sn sonra uzun far tamamen açılıyor. Üstteki şerit far maskesi (sarı: açık, koyu: kısık), sağ alttaki yelpaze aynı kararın kuşbakışı görünümü. Görüntü: Pexels; eğitim verisinden farklı bir kamera, açılar yaklaşık.</sub>
 </p>
 
 ## Bir bakışta
@@ -203,11 +203,22 @@ Doğrulama iki eksiği de ortaya çıkardı ve ikisi de matriste açıkça yazı
 
 Riskleri destekleyen hata enjeksiyonu testleri: [`tests/test_requirements.py`](tests/test_requirements.py).
 
-**Demo.** Sistemin farklı bir kameradan, sokak lambalı çok şeritli bir şehir otoyolundaki davranışı. Karşı şerit ve öndeki araçlar far kapsamının tamamını doldurduğu için maske çoğu karede tamamen kısık: bu yoğunlukta doğru davranış bu. Seçici karartma seyrek trafikli, aydınlatmasız yolda görünür.
+### Demo
 
-<p align="center"><img src="docs/media/demo_frames.jpg" width="900" alt="Demo videosundan üç kare"></p>
+**Aydınlatmasız kırsal yol** (1 dk 55 sn). Bir aracın yaklaşıp geçişi, soldan sağa: araç ortada ve uzakken orta segmentler kısık; yanımızdan geçerken sol taraf kısık (orta segmentler histerezis yüzünden 1 sn daha kısık kalıyor); geçtikten sonra uzun far tamamen açık.
 
-Bu video modelin eğitim verisinden farklı (1080p, bilinmeyen görüş açısı, sokak lambalı yol); demo olarak yararlı, ama ölçüm sonucu buradan çıkarılmıyor. Demo üreticisi: [`scripts/render_demo.py`](scripts/render_demo.py).
+<p align="center"><img src="docs/media/demo_frames_rural.jpg" width="900" alt="Karşıdan gelen aracın yaklaşması, geçişi ve sonrası"></p>
+
+Videonun tamamında uzun far zamanın yaklaşık üçte ikisinde tamamen açık kaldı; altı kısma olayından beşi araç ışıklarından, biri yol kenarı reflektörlerinden geldi. Gecikme bu videoda kare başına 11–17 ms.
+
+**Zor durumlar**, soldan sağa:
+1. Virajda sağdan gelen araçlar: sağ segmentler kısılıyor, sol taraf açık. Doğru davranış.
+2. Yol kenarındaki reflektör dikmeleri araç ışığı sanıldı, iki yanda gereksiz kısma ([fmea.md](docs/fmea.md) FM-07).
+3. Sokak lambalı, yoğun trafikli şehir otoyolu: araçlar far kapsamının tamamını doldurduğu için maske tamamen kısık. Bu yoğunlukta doğru davranış bu; gerçek ADB aydınlatılmış şehir yollarında zaten devre dışıdır.
+
+<p align="center"><img src="docs/media/demo_hard_cases.jpg" width="900" alt="Virajda araçlar, reflektör yanlış alarmı, yoğun şehir otoyolu"></p>
+
+İki video da modelin eğitim verisinden farklı bir kameradan (1080p, görüş açısı bilinmiyor, `--hfov 70` varsayımıyla); demo için kullanıldı, ölçüm sonucu bunlardan çıkarılmıyor. Demo üreticisi: [`scripts/render_demo.py`](scripts/render_demo.py).
 
 ## 8. Bilinen sınırlamalar
 
@@ -322,7 +333,7 @@ adb-night-perception/
 Kod **AGPL-3.0** lisanslıdır ([LICENSE](LICENSE)); sebebi, kullanılan [Ultralytics YOLO](https://github.com/ultralytics/ultralytics) kütüphanesinin AGPL-3.0 olması ([ADR-004](docs/decisions.md)).
 
 - **BDD100K:** görüntüler ve etiketler bu repoda **bulunmaz**; kullanım koşulları için [BDD100K lisansı](https://bdd-data.berkeley.edu/). README'deki şekiller yalnızca sayısal sonuçlardan üretildi.
-- **Demo videosu:** [Pexels](https://www.pexels.com/video/15119004/) (video 15119004), Pexels lisansıyla.
+- **Demo videoları:** [Pexels](https://www.pexels.com/) (dosya 14299569: kırsal yol; dosya 15119004: şehir otoyolu), Pexels lisansıyla.
 
 ---
 
