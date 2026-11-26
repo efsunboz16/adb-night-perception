@@ -125,3 +125,13 @@ Her önemli teknik karar burada kısa olarak kayıt altına alınır: bağlam, k
 - **Bağlam:** Deney 10'da TensorRT FP16 motorları PyTorch ile karşılaştırıldı. 166–249 m recall 0,848 → 0,850 (bantlı), yanlış alarm aynı, video sistem metrikleri birebir aynı, mAP50 farkı ≤ 0,6 puan. Deney 11'de Python hattının gecikmesinin çoğu motor dışında çıktı (bant aşaması 36,7 ms, motor 7,8 ms).
 - **Karar:** Dağıtım hassasiyeti **FP16**. INT8 şimdilik denenmiyor: motor süresi zaten bütçenin küçük bir kısmı, darboğaz ön/son işleme. INT8'in uzak ışıklar için riski (1–8 px'lik zayıf aktivasyonlar) bu kazanç için alınmaya değmez. Jetson gibi daha zayıf bir cihazda motor süresi darboğaz olursa yeniden açılır; derleyici hazır (`deploy/build_engine.py --precision int8`).
 - **Sonuç:** Sıradaki adım C++ hattı: CUDA'da ön işleme, 8 bit aktarım, CUDA Graph. Bant zamanlaması (ADR-016) C++ ölçümüyle kapanacak.
+
+## ADR-021 · C++ hattı yerine Python'da GPU hattı; C++ gelecek çalışma
+- **Bağlam:** Deney 11'de Python hattının gecikmesinin çoğu motor dışında çıktı: bant aşaması 36,7 ms, motoru 7,8 ms. Fark CPU'daki parça hazırlama, Ultralytics'in her parça için yaptığı ön/son işleme ve FP32 aktarım. Gereksinimler (REQ-P-05/06) bir dil değil, iki sayı istiyor. C++ hattı ~1–1,5 hafta; Faz 6 (doğrulama, FMEA, demo) projenin bütünlüğü için daha öncelikli.
+- **Karar:** C++ hattının kazandıracağı işler Python'da yapılır (`adb/trt_runtime.py`, `--backend trt`):
+  1. Kare GPU'ya bir kez, 8 bit gönderilir (sabitlenmiş bellek).
+  2. Tam kare dolgusu ve bant parçalarının kesilip 2x büyütülmesi GPU'da; Ultralytics/cv2 ile aynı formül (birim testlerle ≤ 1 gri seviye).
+  3. Motorlar Ultralytics'siz, TensorRT Python API'siyle, CUDA Graph ile çalışır.
+  4. Kutu çözümleme, eşik ve sınıf bazında NMS GPU'da; CPU'ya yalnızca kalan kutular iner.
+  Doğruluk, Ultralytics motor yoluyla aynı testlerle karşılaştırılır. C++ hattı README'de gelecek çalışma olarak kalır.
+- **Sonuç:** Python'un yorumlayıcı yükü (takip, far kararı) kalır, ama bunlar Deney 11'de toplam ~2 ms. Jetson'da Python yükü daha ağır olabilir; gömülü iddiası ADR-002'deki sınırlar içinde kalır.

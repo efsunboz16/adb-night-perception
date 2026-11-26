@@ -92,6 +92,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--weights", required=True, help=".pt veya tam kare .engine")
     ap.add_argument("--band-weights", help="bant motoru (.engine); .pt için gerekmez")
+    ap.add_argument("--backend", choices=["ultralytics", "trt"], default="ultralytics",
+                    help="trt: motorlar doğrudan, ön/son işleme GPU'da (adb/trt_runtime.py)")
     ap.add_argument("--videos", type=Path, default=ROOT / "data/bdd_video/videos.json")
     ap.add_argument("--data", type=Path, default=ROOT / "data/bdd_adb")
     ap.add_argument("--conds", nargs="+", default=["night", "night_adverse"])
@@ -126,7 +128,7 @@ def main():
         sys.exit(f"{a.videos} içinde {a.conds} videosu yok.")
     cfg = load_slicing(ROOT / "configs/slicing.yaml")
     sysc = load_config()
-    model, band_model = load_detectors(a.weights, a.band_weights, a.imgsz)
+    model, band_model = load_detectors(a.weights, a.band_weights, a.imgsz, backend=a.backend)
     print(f"Tam kare: {model.describe()} | bant: {band_model.describe()}")
     min_conf = min(a.conf)
     print(f"{len(vids)} video ({', '.join(a.conds)}), video başına {a.warmup + 1} kare")
@@ -322,7 +324,7 @@ def main():
     print(f"\nSüre: tam {tf:.1f} ms, bant {tb:.1f} ms, takip {tt:.2f} ms (RTX dizüstü, okuma hariç).")
     print("Not: 5 fps; gerçek kamera 30 fps. Kamaşma ihlali histerezisli maske ile, etiketli karede ölçülür.")
 
-    run_dir = run_dir_for(a.weights)
+    run_dir = run_dir_for(a.weights, backend=a.backend)
     (run_dir / "eval_video.json").write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"Sonuçlar: {run_dir / 'eval_video.json'}")
 

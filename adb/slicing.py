@@ -67,6 +67,8 @@ def _unwrap(model, imgsz=None):
 
 def predict_full(model, img, conf, imgsz=1280, half=True):
     """model: Ultralytics modeli veya adb.models.Detector (sabit boyutlu motorlarda imgsz oradan gelir)."""
+    if getattr(model, "adb_gpu_pipeline", False):             # adb/trt_runtime.py GpuPipeline
+        return model.predict_full(img, conf)
     m, imgsz, _ = _unwrap(model, imgsz)
     return _boxes(m.predict(img, imgsz=imgsz, conf=conf, half=half, verbose=False)[0])
 
@@ -86,6 +88,8 @@ def predict_band(model, img, cfg: dict, conf, half=True):
     """Sadece bant parçalarındaki tahminler (orijinal koordinatlarda).
     model: Ultralytics modeli veya adb.models.Detector. Sabit boyutlu motorda parça boyutu ve sayısı
     motorunkiyle aynı olmalı; değilse hata verilir (sessizce yeniden ölçeklemek uzak ışıkları bozar)."""
+    if getattr(model, "adb_gpu_pipeline", False):             # adb/trt_runtime.py GpuPipeline
+        return model.predict_band(img, conf)
     w = img.shape[1]
     tile_w, scale = cfg["tile_w"], cfg["scale"]
     crops, xs, y0 = band_crops(img, cfg)

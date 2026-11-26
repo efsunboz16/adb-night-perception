@@ -7,7 +7,7 @@ deploy/
 ├── export.py         .pt -> ONNX -> TensorRT motorları (tam kare + bant, FP16 / INT8)
 ├── build_engine.py   ONNX -> motor; INT8 kalibrasyonu, Ultralytics meta verisi
 ├── models/           (repoda yok) .onnx, .engine, kalibrasyon önbelleği, manifest.json
-└── cpp/              C++ çıkarım hattı (Faz 5.5)
+└── cpp/              C++ çıkarım hattı (gelecek çalışma, ADR-021)
 ```
 
 ## 1. Ortam (Windows, RTX 5050)
@@ -73,6 +73,21 @@ trtexec --loadEngine=deploy/models/full_fp16_raw.engine --warmUp=2000 --iteratio
 python eval/bench_latency.py --weights deploy/models/full_fp16.engine --band-weights deploy/models/band_fp16.engine
 ```
 
+## 5. GPU hattı (`--backend trt`, ADR-021)
+
+Motorlar Ultralytics'siz çalışır; kare GPU'ya 8 bit gider, dolgu, bant parçaları, kutu çözümleme ve NMS GPU'da, motorlar CUDA Graph ile (`adb/trt_runtime.py`). Aynı scriptler, aynı motorlar:
+
+```powershell
+# Doğruluk: Ultralytics motor yoluyla aynı olmalı
+python eval/eval_distance.py --weights deploy/models/full_fp16.engine --band-weights deploy/models/band_fp16.engine --conds night --slice --backend trt
+python eval/eval_video.py --weights deploy/models/full_fp16.engine --band-weights deploy/models/band_fp16.engine --scenes highway residential --backend trt
+# Gecikme: CUDA Graph açık ve kapalı
+python eval/bench_latency.py --weights deploy/models/full_fp16.engine --band-weights deploy/models/band_fp16.engine --backend trt
+python eval/bench_latency.py --weights deploy/models/full_fp16.engine --band-weights deploy/models/band_fp16.engine --backend trt --no-cuda-graph
+```
+
+Sonuçlar `runs/trt/<motor adı>_gpu/` altına yazılır.
+
 ## Sonuçlar (Deney 9, RTX 5050, FP16, yalnızca motor)
 
 | | p50 | p95 | p99 |
@@ -84,4 +99,4 @@ Veri aktarımı dahil.
 
 **Doğruluk (Deney 10):** FP16 = PyTorch (220 m recall 0,848 / 0,850, sistem metrikleri aynı). Hassasiyet FP16 (ADR-020).
 
-**Python hattı (Deney 11):** bant her karede p95 81 ms, iki karede bir 39 ms. Darboğaz motor değil, CPU'daki ön/son işleme. Sıradaki adım C++ hattı.
+**Python hattı (Deney 11):** bant her karede p95 81 ms, iki karede bir 39 ms. Darboğaz motor değil, CPU'daki ön/son işleme. GPU hattı (bölüm 5) bunu hedefliyor.

@@ -19,6 +19,7 @@ uygulamalar kapalı.
 Kullanım:
   python eval/bench_latency.py --weights deploy/models/full_fp16.engine --band-weights deploy/models/band_fp16.engine
   python eval/bench_latency.py --weights runs/baseline/weights/best.pt            # PyTorch karşılaştırması
+  python eval/bench_latency.py --weights deploy/models/full_fp16.engine --band-weights deploy/models/band_fp16.engine --backend trt   # GPU hattı
 Çıktı: ekrana tablo + runs/trt/<motor>/latency.json (veya runs/<ad>/latency.json)
 """
 
@@ -105,7 +106,7 @@ def run(frames, full, band, cfg, sysc, band_every: int, fps: float, warmup: int)
         c4 = time.perf_counter()
         mask = bc.step(*out[:3], ts)
         c5 = time.perf_counter()
-        ok = sm.frame(ts, mean01=float(img.mean()) / 255.0)
+        ok = sm.frame(ts, mean01=float(img[::4, ::4].mean()) / 255.0)   # 1/16 örnekleme; tam kare ~3 ms
         SafetyMonitor.apply(mask, ok)
         c6 = time.perf_counter()
         if i < warmup:
@@ -125,6 +126,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--weights", required=True, help=".pt veya tam kare .engine")
     ap.add_argument("--band-weights", help="bant motoru (.engine); .pt için gerekmez")
+    ap.add_argument("--backend", choices=["ultralytics", "trt"], default="ultralytics",
+                    help="trt: motorlar doğrudan, ön/son işleme GPU'da (adb/trt_runtime.py)")
+    ap.add_argument("--no-cuda-graph", action="store_true", help="--backend trt'de CUDA Graph kapalı (karşılaştırma)")
     ap.add_argument("--videos", type=Path, default=ROOT / "data/bdd_video/videos.json")
     ap.add_argument("--data", type=Path, default=ROOT / "data/bdd_adb")
     ap.add_argument("--n", type=int, default=600, help="ölçülecek kare sayısı (ısınma dahil)")
@@ -141,7 +145,10 @@ def main():
     sysc = load_config()
     fps = float(sysc["camera"]["fps"])
     budget = float(sysc["targets"]["end_to_end_latency_ms_max"])
-    full, band = load_detectors(a.weights, a.band_weights, a.imgsz)
+    if a.backend == "trt" and a.no_cuda_graph:
+        from adb import trt_runtime
+        trt_runtime.DEFAULT_CUDA_GRAPH = False
+    full, band = load_detectors(a.weights, a.band_weights, a.imgsz, backend=a.backend)
     cfg = load_slicing()
     frames, src = load_frames(a)
     gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
@@ -165,17 +172,20 @@ def main():
               f"{fps:.0f} fps kare aralığı {1000 / fps:.1f} ms: {'sığıyor' if p95 <= 1000 / fps else 'SIĞMIYOR'}")
 
     import platform
-    out = {"weights": a.weights, "band_weights": a.band_weights or a.weights, "gpu": gpu,
+    out = {"weights": a.weights, "band_weights": a.band_weights or a.weights, "backend": a.backend,
+           "cuda_graph": a.backend == "trt" and not a.no_cuda_graph, "gpu": gpu,
            "frames": len(frames), "source": src, "warmup": a.warmup, "torch": torch.__version__,
            "python": platform.python_version(), "budget_ms": budget,
-           "note": "Python hattı (Ultralytics ön/son işleme dahil); kamera yakalama ve disk okuma hariç",
+           "note": "Python hattı; kamera yakalama ve disk okuma hariç. ultralytics: ön/son işleme CPU'da; "
+            "trt: ön/son işleme GPU'da (adb/trt_runtime.py)",
            "results": results}
     try:
         import tensorrt as trt
         out["tensorrt"] = trt.__version__
     except ImportError:
         pass
-    p = run_dir_for(a.weights) / "latency.json"
+    tag = "_nograph" if a.backend == "trt" and a.no_cuda_graph else ""
+    p = run_dir_for(a.weights, backend=a.backend) / f"latency{tag}.json"
     p.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\nKaydedildi: {p}")
 

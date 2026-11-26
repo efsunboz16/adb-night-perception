@@ -2,7 +2,7 @@
 
 **Gece sürüşü için kamera tabanlı adaptif uzun far (ADB) algılama sistemi.** Tek ön kameradan araçları, farları ve arka lambaları algılar. Uzun farı açık tutarken yalnızca diğer yol kullanıcılarının bulunduğu açı dilimlerini karartacak 16 segmentlik bir far maskesi üretir. Hedef platform: gömülü cihaz (NVIDIA Jetson) üzerinde gerçek zamanlı çalışma.
 
-> **Durum:** Faz 4 / 6 tamamlandı, Faz 5 (gerçek zamanlılık) sürüyor: TensorRT FP16 ile tam kare + ufuk bandı algılaması RTX 5050'de **~11 ms** (Deney 9), doğruluk PyTorch ile aynı (Deney 10). Python hattının tamamı bant iki karede bir ile p95 **39 ms** (hedef ≤ 50 ms); darboğaz ön/son işleme, C++ hattıyla çözülecek. Araç sınıfında gece mAP50 **0,79**. Gece 220 m bandında araç veya ışığı tam kare çıkarımla **%75**, ufuk bandı dilimlemesiyle **%85** yakalanıyor (hedef %90). Otoyol gece videolarında far titremesi dakikada **1,2** (hedef ≤ 2). Lambası yanan araçlarda kamaşma ihlali **%1,3** (hedef ≤ %1): ihlallerin hiçbiri far geometrisinden değil, 4/5'i bozuk görüntülerden (ıslak cam, kamera sarsıntısı). Ayrıntılar: [docs/results.md](docs/results.md) · Süreç, sorunlar ve çözümler: [docs/devlog.md](docs/devlog.md)
+> **Durum:** Faz 4 / 6 tamamlandı, Faz 5 (gerçek zamanlılık) sürüyor: TensorRT FP16 ile tam kare + ufuk bandı algılaması RTX 5050'de **~11 ms** (Deney 9), doğruluk PyTorch ile aynı (Deney 10). Python hattının tamamı bant iki karede bir ile p95 **39 ms** (hedef ≤ 50 ms); darboğaz ön/son işleme; GPU'ya taşınıyor ([ADR-021](docs/decisions.md)). Araç sınıfında gece mAP50 **0,79**. Gece 220 m bandında araç veya ışığı tam kare çıkarımla **%75**, ufuk bandı dilimlemesiyle **%85** yakalanıyor (hedef %90). Otoyol gece videolarında far titremesi dakikada **1,2** (hedef ≤ 2). Lambası yanan araçlarda kamaşma ihlali **%1,3** (hedef ≤ %1): ihlallerin hiçbiri far geometrisinden değil, 4/5'i bozuk görüntülerden (ıslak cam, kamera sarsıntısı). Ayrıntılar: [docs/results.md](docs/results.md) · Süreç, sorunlar ve çözümler: [docs/devlog.md](docs/devlog.md)
 
 ---
 
@@ -55,7 +55,7 @@ flowchart TD
 | Takip | ✅ kod + birim test | Uzak/küçük nesnelere uyarlanmış ByteTrack mantığı ([`adb/tracking.py`](adb/tracking.py)) |
 | Far kararı | ✅ kod + birim test | Paralaks düzeltmesi, güvenlik payı, histerezis ([`adb/decision.py`](adb/decision.py)) |
 | Güvenlik izleyici | ✅ kod + birim test | Kare gecikmesi ve aşırı parlaklıkta kısa fara dönüş. Bulanıklık kontrolü kapalı, güvenilir eşik bulunamadı ([`adb/safety.py`](adb/safety.py), ADR-018) |
-| Gömülü dağıtım | 🔄 Faz 5 | TensorRT FP16 motorları ✅ (tam kare 736×1280 + bant 4×704×768, [ADR-019](docs/decisions.md)), doğruluk eşitliği ✅, FP16 seçildi ([ADR-020](docs/decisions.md)), C++ ⏳ ([deploy/](deploy/README.md)) |
+| Gömülü dağıtım | 🔄 Faz 5 | TensorRT FP16 motorları ✅ (tam kare 736×1280 + bant 4×704×768, [ADR-019](docs/decisions.md)), doğruluk eşitliği ✅, FP16 seçildi ([ADR-020](docs/decisions.md)), GPU'da ön/son işleme ⏳ ([ADR-021](docs/decisions.md)), C++ gelecek çalışma ([deploy/](deploy/README.md)) |
 
 ## Sonuçlar
 
@@ -131,7 +131,7 @@ Kare yerine dikdörtgen giriş piksellerin %42'lik dolgusunu kaldırdı. CUDA Gr
 
 **FP16 doğruluğu korudu (Deney 10):** 166–249 m recall bantlı 0,848 → 0,850, yanlış alarm aynı, video sistem metrikleri (kamaşma, kullanım, titreme) birebir aynı, mAP50 farkı ≤ 0,6 puan.
 
-**Python hattının tamamı (Deney 11):** bant her karede p95 81 ms, iki karede bir 39 ms. Motorlar 11 ms; gerisi CPU'daki parça hazırlama ve Ultralytics ön/son işlemesi. C++ hattı (GPU'da ön işleme, CUDA Graph) bunu hedefliyor.
+**Python hattının tamamı (Deney 11):** bant her karede p95 81 ms, iki karede bir 39 ms. Motorlar 11 ms; gerisi CPU'daki parça hazırlama ve Ultralytics ön/son işlemesi. Ön/son işlemeyi GPU'ya taşıyan Python hattı (`--backend trt`, ADR-021) bunu hedefliyor.
 
 Tam tablolar, ışık sınıfı sonuçları ve sınırlamalar: [docs/results.md](docs/results.md)
 
@@ -241,7 +241,7 @@ adb-night-perception/
 |---|---|
 | [requirements.md](docs/requirements.md) | Kimlik numaralı gereksinimler (REQ-F/P/S), piksel bütçesi, çalışma alanı (ODD) |
 | [architecture.md](docs/architecture.md) | Modüller, arayüzler, karşılaştırılacak algılama mimarileri |
-| [decisions.md](docs/decisions.md) | 20 karar kaydı (ADR): bağlam, karar, sonuç |
+| [decisions.md](docs/decisions.md) | 21 karar kaydı (ADR): bağlam, karar, sonuç |
 | [literature.md](docs/literature.md) | SmartBeam, PVDN, 2PCNet, SAHI vb. ve projeye katkıları |
 | [results.md](docs/results.md) | Deney sonuçları ve gözlemler (Deney 1–8) |
 | [devlog.md](docs/devlog.md) | Geliştirme günlüğü: karşılaşılan sorunlar, çözümler, çözülemeyenler |
@@ -255,7 +255,7 @@ adb-night-perception/
 | 2 | Temel model, koşul ve mesafe bazlı değerlendirme | ✅ |
 | 3 | Uzak araç iyileştirmesi: dilimleme ✅, sözde etiketleme ❌, P2 kafası ❌, giriş büyütme ⚠️ | ✅ |
 | 4 | Takip ✅, far kararı ✅, video üzerinde sistem metrikleri ✅, kamaşma teşhisi ✅, güvenlik izleyici ✅ (bulanıklık hariç) | ✅ |
-| 5 | TensorRT FP16 motorları ✅, motor gecikmesi ✅, doğruluk eşitliği ✅, Python uçtan uca gecikme ✅, INT8 (ertelendi), C++ çıkarım ⏳ | 🔄 |
+| 5 | TensorRT FP16 motorları ✅, motor gecikmesi ✅, doğruluk eşitliği ✅, Python uçtan uca gecikme ✅, GPU'da ön/son işleme ⏳, INT8 (ertelendi), C++ (gelecek çalışma) | 🔄 |
 | 6 | Doğrulama, FMEA, demo videosu | ⏳ |
 
 ## Bilinen sınırlamalar

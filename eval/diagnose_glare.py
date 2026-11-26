@@ -132,6 +132,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--weights", required=True, help=".pt veya tam kare .engine")
     ap.add_argument("--band-weights", help="bant motoru (.engine); yalnızca bantlı modlarda ve motorla gerekir")
+    ap.add_argument("--backend", choices=["ultralytics", "trt"], default="ultralytics",
+                    help="trt: motorlar doğrudan, ön/son işleme GPU'da (adb/trt_runtime.py)")
     ap.add_argument("--videos", type=Path, default=ROOT / "data/bdd_video/videos.json")
     ap.add_argument("--data", type=Path, default=ROOT / "data/bdd_adb")
     ap.add_argument("--conds", nargs="+", default=["night", "night_adverse"])
@@ -156,8 +158,8 @@ def main():
         vids = {k: v for k, v in vids.items() if sc.get(k) in a.scenes}
     use_band, tracked = "bant" in a.mode, a.mode.startswith("takip")
     cfg = load_slicing(ROOT / "configs/slicing.yaml") if use_band else None
-    model, band_model = load_detectors(a.weights, a.band_weights, a.imgsz, need_band=use_band)
-    out_dir = run_dir_for(a.weights) / "glare_diag"
+    model, band_model = load_detectors(a.weights, a.band_weights, a.imgsz, need_band=use_band, backend=a.backend)
+    out_dir = run_dir_for(a.weights, backend=a.backend) / "glare_diag"
     out_dir.mkdir(exist_ok=True)
     for f in out_dir.glob("*.jpg"):
         f.unlink()

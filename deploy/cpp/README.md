@@ -1,3 +1,3 @@
 # deploy/cpp
 
-C++ çıkarım hattı (Faz 5.5): TensorRT 10 C++ API, iki motor, CUDA'da ön işleme, CUDA Graph, takip / far kararı / güvenlik izleyici portu. Python doğruluk eşitliği ölçümlerinden sonra yazılacak. Plan ve kararlar: [../README.md](../README.md), [ADR-019](../../docs/decisions.md).
+C++ çıkarım hattı: **gelecek çalışma** ([ADR-021](../../docs/decisions.md)). C++'ın kazandıracağı işler (GPU'da ön/son işleme, 8 bit aktarım, CUDA Graph) Python'da `adb/trt_runtime.py` ile yapıldı. C++ portu için gerekenler: TensorRT 10 C++ API, iki motor, takip / far kararı / güvenlik izleyici portu ve Python hattıyla maske karşılaştırması (altın test).

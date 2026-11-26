@@ -96,13 +96,30 @@ def _load(path: str, imgsz_default):
 
 
 def load_detectors(weights: str, band_weights: str | None = None, imgsz: int = 1280,
-                   need_band: bool = True) -> tuple[Detector, Detector | None]:
+                   need_band: bool = True, backend: str = "ultralytics"):
     """Tam kare ve bant modellerini yükler.
+
+    backend:
+      ultralytics : modeller Ultralytics üzerinden (ön/son işleme CPU'da)  -> (Detector, Detector)
+      trt         : TensorRT motorları doğrudan, ön/son işleme GPU'da (adb/trt_runtime.py, ADR-021)
+                    -> (GpuPipeline, GpuPipeline): aynı nesne hem tam kare hem bant için
 
     band_weights verilmezse:
       - .pt / .onnx: bant da aynı modelle çalışır (Faz 3–4 davranışı)
       - .engine   : sabit boyutlu motor bantta kullanılamaz; need_band ise hata
     """
+    if backend == "trt":
+        if not is_engine(weights) or (band_weights and not is_engine(band_weights)):
+            raise SystemExit("--backend trt yalnızca .engine dosyalarıyla çalışır.")
+        if need_band and not band_weights:
+            raise SystemExit("--backend trt için bant motoru da gerekli (--band-weights).")
+        from adb.geometry import load_config
+        from adb.slicing import load_slicing
+        from adb.trt_runtime import GpuPipeline
+
+        cam = load_config()["camera"]
+        pipe = GpuPipeline(weights, band_weights, load_slicing(), (cam["height_px"], cam["width_px"]))
+        return pipe, pipe
     full = _load(weights, imgsz)
     if band_weights:
         band = _load(band_weights, None)
@@ -116,14 +133,15 @@ def load_detectors(weights: str, band_weights: str | None = None, imgsz: int = 1
     return full, band
 
 
-def run_dir_for(weights: str | Path, root: Path | None = None) -> Path:
+def run_dir_for(weights: str | Path, root: Path | None = None, backend: str = "ultralytics") -> Path:
     """Sonuçların yazılacağı klasör.
     .pt  : runs/<ad>/weights/best.pt -> runs/<ad>   (Faz 1–4 ile aynı)
-    motor: deploy/models/full_fp16.engine -> runs/trt/full_fp16   (PyTorch sonuçlarının üzerine yazmaz)"""
+    motor: deploy/models/full_fp16.engine -> runs/trt/full_fp16   (PyTorch sonuçlarının üzerine yazmaz)
+    GPU hattı (--backend trt): runs/trt/full_fp16_gpu"""
     p = Path(weights).resolve()
     if is_engine(p) or p.suffix.lower() == ".onnx":
         root = root or Path(__file__).resolve().parents[1]
-        d = root / "runs" / "trt" / p.stem
+        d = root / "runs" / "trt" / (p.stem + ("_gpu" if backend == "trt" else ""))
         d.mkdir(parents=True, exist_ok=True)
         return d
     return p.parents[1]

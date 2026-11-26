@@ -169,10 +169,27 @@ def run_sliced(model, band_model, paths, data, a, min_conf, cond):
     return {f"{cond}·tam": st_full, f"{cond}·bant": st_band}
 
 
+def iter_predictions(model, src, paths, conf, batch):
+    """(yol, (xyxy, cls, conf)) üretir. Ultralytics: metin dosyasından akış; GPU hattı: kare kare."""
+    if getattr(model, "adb_gpu_pipeline", False):
+        import cv2
+        for p in paths:
+            img = cv2.imread(p)
+            if img is not None:
+                yield p, model.predict_full(img, conf)
+        return
+    for r in model.model.predict(str(src), imgsz=model.imgsz, conf=conf, half=True,
+                                 batch=model.batch or batch, stream=True, verbose=False):
+        b = r.boxes
+        yield r.path, (b.xyxy.cpu().numpy(), b.cls.cpu().numpy().astype(int), b.conf.cpu().numpy())
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--weights", required=True, help=".pt veya tam kare .engine")
     ap.add_argument("--band-weights", help="bant motoru (.engine); .pt için gerekmez")
+    ap.add_argument("--backend", choices=["ultralytics", "trt"], default="ultralytics",
+                    help="trt: motorlar doğrudan, ön/son işleme GPU'da (adb/trt_runtime.py)")
     ap.add_argument("--data", default=str(ROOT / "data/bdd_adb"))
     ap.add_argument("--conds", nargs="+", default=["day", "night", "night_adverse"])
     ap.add_argument("--conf", type=float, nargs="+", default=[0.1, 0.25],
@@ -187,11 +204,11 @@ def main():
     a = ap.parse_args()
 
     from adb.models import load_detectors, run_dir_for
-    model, band_model = load_detectors(a.weights, a.band_weights, a.imgsz, need_band=a.slice)
+    model, band_model = load_detectors(a.weights, a.band_weights, a.imgsz, need_band=a.slice, backend=a.backend)
     print(f"Tam kare: {model.describe()}" + (f" | bant: {band_model.describe()}" if a.slice else ""))
     fx = Camera.from_config(load_config()).fx_px
     data = Path(a.data)
-    run_dir = run_dir_for(a.weights)
+    run_dir = run_dir_for(a.weights, backend=a.backend)
     tag = "" if a.imgsz == 1280 else f"_{a.imgsz}"          # önceki sonuçların üzerine yazmasın
     min_conf = min(a.conf)
 
@@ -215,11 +232,9 @@ def main():
             continue
         st = new_stats(a.conf)
         t0 = time.time()
-        for i, r in enumerate(model.model.predict(str(src), imgsz=model.imgsz, conf=min_conf, half=True,
-                                                  batch=model.batch or a.batch, stream=True, verbose=False), 1):
-            lbl = data / "labels" / "test" / f"{Path(r.path).stem}.txt"
-            accumulate(st, read_gt(lbl), r.boxes.xyxy.cpu().numpy(), r.boxes.cls.cpu().numpy().astype(int),
-                       r.boxes.conf.cpu().numpy(), a.conf, a.iou, gt_all=read_gt(lbl, range(6)))
+        for i, (pth, dets) in enumerate(iter_predictions(model, src, paths, min_conf, a.batch), 1):
+            lbl = data / "labels" / "test" / f"{Path(pth).stem}.txt"
+            accumulate(st, read_gt(lbl), *dets, a.conf, a.iou, gt_all=read_gt(lbl, range(6)))
             if i % 500 == 0 or i == len(paths):
                 print(f"\r  [{cond}] {i}/{len(paths)}  ({time.time() - t0:.0f} sn)", end="", flush=True)
         print()
