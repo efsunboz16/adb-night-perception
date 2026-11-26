@@ -1,150 +1,99 @@
 # ADB Night Perception
 
-**Gece sürüşü için kamera tabanlı adaptif uzun far (ADB) algılama sistemi.** Tek ön kameradan araçları, farları ve arka lambaları algılar. Uzun farı açık tutarken yalnızca diğer yol kullanıcılarının bulunduğu açı dilimlerini karartacak 16 segmentlik bir far maskesi üretir. Hedef platform: gömülü cihaz (NVIDIA Jetson) üzerinde gerçek zamanlı çalışma.
+**Gece sürüşü için kamera tabanlı adaptif uzun far (ADB) algılama sistemi.** Tek bir ön kameradan araçları, farları ve arka lambaları algılar; uzun farı açık tutarken yalnızca diğer yol kullanıcılarının bulunduğu açı dilimlerini karartan 16 segmentlik bir far maskesi üretir. Gerçek zamanlı çalışır: RTX 5050 dizüstü GPU'da uçtan uca **20 ms** (p95).
 
-> **Durum:** Faz 5 / 6 tamamlandı, sırada Faz 6 (doğrulama, FMEA, demo) var. TensorRT FP16 + GPU'da ön/son işleme ile uçtan uca gecikme RTX 5050'de bant her karede p95 **20 ms**, ~60 FPS (hedef ≤ 50 ms, ≥ 25 FPS). Doğruluk PyTorch ile aynı (Deney 10–12). Araç sınıfında gece mAP50 **0,79**. Gece 220 m bandında araç veya ışığı tam kare çıkarımla **%75**, ufuk bandı dilimlemesiyle **%85** yakalanıyor (hedef %90). Otoyol gece videolarında far titremesi dakikada **1,2** (hedef ≤ 2). Lambası yanan araçlarda kamaşma ihlali **%1,3** (hedef ≤ %1): ihlallerin hiçbiri far geometrisinden değil, 4/5'i bozuk görüntülerden (ıslak cam, kamera sarsıntısı). Ayrıntılar: [docs/results.md](docs/results.md) · Süreç, sorunlar ve çözümler: [docs/devlog.md](docs/devlog.md)
+<p align="center">
+  <img src="docs/media/demo.gif" width="760" alt="ADB demo: tespitler, iz numaraları, üstte 16 segmentlik far maskesi, sağ altta kuşbakışı far yelpazesi">
+  <br><sub>Üstteki şerit far maskesi (sarı: uzun far açık, koyu: kısık), sağ alttaki yelpaze aynı kararın kuşbakışı görünümü. Görüntü: Pexels (video 15119004). Bu video modelin eğitim verisinden farklı bir kameradan; açılar yaklaşık.</sub>
+</p>
+
+## Bir bakışta
+
+| | Sonuç | Hedef | |
+|---|---|---|---|
+| 220 m'de karşıdan gelen aracı yakalama (gece) | **%85** | %90 | ❌ yaklaştı: tam kare %75 → ufuk bandıyla %85 |
+| Uçtan uca gecikme (p95) | **20,4 ms** | ≤ 50 ms | ✅ |
+| İşlem hızı | **~60 FPS** (RTX 5050) | ≥ 25 FPS | ⚠️ gömülü cihazda ölçülmedi |
+| Lambası yanan araçta kamaşma ihlali | **%1,3** | ≤ %1 | ❌ ihlallerin 4/5'i bozuk görüntüden |
+| Far geometrisi kaynaklı kamaşma | **0** | | ✅ araç bulunduğunda doğru segment her seferinde kısıldı |
+| Far titremesi (otoyol) | **1,2 / dk** | ≤ 2 / dk | ✅ |
+
+Gereksinimlerin tamamı, ölçüm kaynaklarıyla: [docs/verification.md](docs/verification.md). Sonuçlar burada olduğu gibi, başarısızlıklar dahil raporlanıyor.
 
 ---
 
 ## İçindekiler
-1. [Problem](#problem)
-2. [Sistem mimarisi](#sistem-mimarisi)
-3. [Sonuçlar](#sonuçlar)
-4. [Veri ve etiketleme](#veri-ve-etiketleme)
-5. [Model ve eğitim](#model-ve-eğitim)
-6. [Kurulum ve kullanım](#kurulum-ve-kullanım)
-7. [Repo yapısı](#repo-yapısı)
-8. [Mühendislik dokümanları](#mühendislik-dokümanları)
-9. [Yol haritası](#yol-haritası)
-10. [Bilinen sınırlamalar](#bilinen-sınırlamalar)
-11. [Lisans](#lisans)
+1. [Bu proje ne yapıyor?](#1-bu-proje-ne-yapıyor)
+2. [Neden zor?](#2-neden-zor)
+3. [Sistem nasıl çalışıyor?](#3-sistem-nasıl-çalışıyor)
+4. [Veri](#4-veri)
+5. [Model ve eğitim](#5-model-ve-eğitim)
+6. [Geliştirme yolculuğu: 6 faz, 12 deney](#6-geliştirme-yolculuğu-6-faz-12-deney)
+7. [Doğrulama ve risk analizi](#7-doğrulama-ve-risk-analizi)
+8. [Bilinen sınırlamalar](#8-bilinen-sınırlamalar)
+9. [Kurulum ve kullanım](#9-kurulum-ve-kullanım)
+10. [Repo yapısı ve dokümanlar](#10-repo-yapısı-ve-dokümanlar)
+11. [Lisans ve kaynaklar](#11-lisans-ve-kaynaklar)
 
 ---
 
-## Problem
+## 1. Bu proje ne yapıyor?
 
-Uzun far görüş mesafesini yaklaşık iki katına çıkarır, ama diğer sürücüleri kamaştırdığı için az kullanılır. ADB sistemi uzun farı açık tutar ve yalnızca diğer araçların bulunduğu dilimleri karartır. Bunun için sistemin araçları **çok uzaktan ve gece** fark etmesi gerekir.
+Uzun far görüş mesafesini yaklaşık iki katına çıkarır, ama karşıdan gelen ve öndeki sürücüleri kamaştırdığı için çoğu zaman kapalıdır. **Adaptif uzun far (ADB)** farı LED segmentlerine böler: uzun far hep açık kalır, yalnızca diğer araçların bulunduğu dilimler karartılır.
 
-Asıl zorluk mesafe. 60° görüş açılı, 1280 px genişliğinde bir kamerada:
+<p align="center"><img src="docs/media/beam_geometry.png" width="640" alt="16 segmentlik far yelpazesi; karşıdan gelen aracın bulunduğu 3 segment kısık"></p>
 
-| Mesafe | Far çifti arası (1,5 m) | Tek far/lamba (0,2 m) |
-|---|---|---|
-| 30 m | 55 px | 7 px |
-| 100 m | 17 px | 2 px |
-| **220 m** | **8 px** | **1 px** |
+Bu repo, işin **görme ve karar** kısmını yapıyor: kamera görüntüsünden hangi segmentlerin kısılacağına karar veren yazılım. Far donanımı ve LED sürücüsü kapsam dışı.
 
-ABD'deki ADB kuralı (FMVSS 108) karşıdan gelen araçları 220 m'ye kadar test ediyor. Bu mesafede araç gövdesi gece görünmez, sadece **8 piksel aralıklı iki ışık noktası** kalır. Bu yüzden sistem araç gövdesinin yanında far ve arka lambaları da ayrı sınıflar olarak algılıyor. Hesap: [`scripts/pixel_budget.py`](scripts/pixel_budget.py), gerekçeler: [docs/requirements.md](docs/requirements.md).
+## 2. Neden zor?
 
-## Sistem mimarisi
+Asıl zorluk mesafe. ABD'nin ADB kuralı (FMVSS 108) karşıdan gelen araçları **220 m**'ye kadar test ediyor. 60° görüş açılı, 1280 px genişliğinde bir kamerada o mesafede araç gövdesi gece görünmez; geriye **8 piksel aralıklı iki ışık noktası** kalır.
+
+<p align="center"><img src="docs/media/pixel_budget.png" width="620" alt="Mesafeye göre görüntüdeki genişlik: 220 m'de far çifti 8 px, tek lamba 1 px"></p>
+
+Bu yüzden model araç gövdesinin yanında **farları ve arka lambaları da ayrı sınıflar** olarak algılıyor. İki zorluk daha var:
+- **Hız:** karar, araç görüldükten sonra 200 ms içinde verilmeli; kamera 30 kare/sn.
+- **Asimetrik hata:** açık bırakmak (karşıdakini kamaştırmak) kısmaktan çok daha kötü. Sistem şüphede kısa fara döner.
+
+Hesaplar: [`scripts/pixel_budget.py`](scripts/pixel_budget.py) · gereksinimler: [docs/requirements.md](docs/requirements.md)
+
+## 3. Sistem nasıl çalışıyor?
 
 ```mermaid
-flowchart TD
-    CAM[Kamera + ön işleme<br/>1280×720, 30 FPS] --> DET[Algılama ağı · YOLO11s<br/>araç + far + arka lamba]
-    DET --> TRK[Takip<br/>kimlik, yumuşatma, hız]
-    TRK --> GEO[Geometri<br/>piksel → açı, paralaks düzeltmesi]
-    GEO --> DEC[Far kararı<br/>güvenlik payı + histerezis]
-    DEC --> LED[LED matrisi<br/>16 segment]
-    MON[Güvenlik izleyici<br/>kare kaybı, aşırı parlaklık, kirli lens] -.kısa fara dön.-> DEC
+flowchart LR
+    CAM["Kamera<br/>1280×720, 30 FPS"] --> UP["GPU'ya gönder<br/>8 bit, bir kez"]
+    UP --> FULL["Tam kare<br/>736×1280"]
+    UP --> BAND["Ufuk bandı<br/>4 parça, 2× büyütme"]
+    FULL --> TRT["YOLO11s · TensorRT FP16<br/>araç + far + arka lamba"]
+    BAND --> TRT
+    TRT --> MRG["Birleştir<br/>NMS"]
+    MRG --> TRK["Takip<br/>kimlik, hız"]
+    TRK --> DEC["Far kararı<br/>açı, paralaks,<br/>1° pay, histerezis"]
+    DEC --> LED["16 segment<br/>far maskesi"]
+    MON["Güvenlik izleyici<br/>kare kaybı, aşırı parlaklık"] -. "kısa fara dön" .-> LED
 ```
 
-| Modül | Durum | Not |
-|---|---|---|
-| Algılama | ✅ eğitildi | YOLO11s, 1280 px, 10 sınıf |
-| Ufuk bandı dilimleme | ✅ kod + birim test | Uzak araçlar için 2x büyütülmüş bant parçaları ([`adb/slicing.py`](adb/slicing.py)) |
-| Geometri | ✅ kod + birim test | Paralaks düzeltmesi zorunlu: 15 m'de 3,7° hata (~2 segment) |
-| Takip | ✅ kod + birim test | Uzak/küçük nesnelere uyarlanmış ByteTrack mantığı ([`adb/tracking.py`](adb/tracking.py)) |
-| Far kararı | ✅ kod + birim test | Paralaks düzeltmesi, güvenlik payı, histerezis ([`adb/decision.py`](adb/decision.py)) |
-| Güvenlik izleyici | ✅ kod + birim test | Kare gecikmesi ve aşırı parlaklıkta kısa fara dönüş. Bulanıklık kontrolü kapalı, güvenilir eşik bulunamadı ([`adb/safety.py`](adb/safety.py), ADR-018) |
-| Gömülü dağıtım | ✅ Faz 5 | TensorRT FP16 motorları ✅ (tam kare 736×1280 + bant 4×704×768, [ADR-019](docs/decisions.md)), doğruluk eşitliği ✅, FP16 ([ADR-020](docs/decisions.md)), GPU'da ön/son işleme + CUDA Graph ✅ ([ADR-021](docs/decisions.md)): uçtan uca p95 20 ms. C++ gelecek çalışma ([deploy/](deploy/README.md)) |
+Her kare için sırasıyla:
 
-## Sonuçlar
+1. **Algılama, iki geçişte.** Tam kare bir kez taranır. Ayrıca uzak araçların toplandığı **ufuk bandı** dört parçaya bölünür, iki kat büyütülür ve ayrıca taranır. 220 m'de recall'ı %75'ten %85'e çıkaran şey bu ([ADR-015](docs/decisions.md)).
 
-**Deney 1: Temel model.** Test seti: BDD100K val (10.000 görüntü), koşullara ayrılmış.
+   <p align="center"><img src="docs/media/slicing.png" width="760" alt="Ufuk bandı: görüntünün orta yüksekliğindeki bant 4 parçaya bölünüp 2 kat büyütülüyor"></p>
 
-| Koşul | Görüntü | Precision | Recall | mAP50 | car | truck | motorcycle | person |
-|---|---|---|---|---|---|---|---|---|
-| Gündüz | 4.435 | 0,70 | 0,54 | 0,61 | 0,84 | 0,62 | 0,40 | 0,69 |
-| **Gece** | 3.363 | 0,66 | 0,54 | 0,59 | **0,79** | 0,59 | 0,44 | 0,64 |
-| Yağmurlu gece | 566 | 0,63 | 0,53 | 0,59 | 0,79 | 0,62 | 0,46 | 0,62 |
-| Alacakaranlık | 648 | 0,77 | 0,53 | 0,62 | 0,84 | 0,62 | 0,41 | 0,65 |
+2. **Takip** ([`adb/tracking.py`](adb/tracking.py)). Tespitler karelere göre eşlenir; tek karelik yansımalar elenir (iz, iki görüşte onaylanır). Uzak ve küçük nesneler için uyarlanmış ByteTrack mantığı.
+3. **Geometri** ([`adb/geometry.py`](adb/geometry.py)). Piksel → açı. Kamera aracın ortasında, farlar 0,7 m yanda: yakındaki araçta bu **paralaks** 15 m'de 3,7° hata (~2 segment) demek, düzeltiliyor.
+4. **Far kararı** ([`adb/decision.py`](adb/decision.py)). Aracın açı aralığına her yandan **1° güvenlik payı** eklenir, kesişen segmentler kısılır. Araç kaybolursa segment **1 sn** daha kısık kalır (histerezis): titremeyi önler.
+5. **Güvenlik izleyici** ([`adb/safety.py`](adb/safety.py)). Kare 200 ms gelmezse ya da görüntü aşırı parlaksa tüm segmentler kısılır.
 
-**Hız:** RTX 5050 Laptop, FP16, 1280 px'te görüntü başına 6,5 ms çıkarım.
+| Modül | Doğrulama |
+|---|---|
+| Algılama + ufuk bandı | Mesafe bazlı recall (Deney 1–2, 12), FP16 eşitliği (Deney 10) |
+| Takip, geometri, far kararı | Birim testler + 68 gece videosunda sistem metrikleri (Deney 6–7) |
+| Güvenlik izleyici | Hata enjeksiyonu testleri: kamera donması, aşırı pozlama ([`tests/test_requirements.py`](tests/test_requirements.py)) |
+| Gerçek zamanlı hat | Aşama aşama gecikme ölçümü (Deney 9, 11, 12) |
 
-**Gözlemler:**
-- **Gece–gündüz farkı küçük:** Genel mAP50'de 1,6 puan. Gece ağırlıklı eğitim listesi (ADR-010) işe yaradı.
-- **Darboğaz recall:** Her koşulda ~0,53. Model gördüğünde çoğunlukla haklı, ama araçların yaklaşık yarısını kaçırıyor. Koşuldan bağımsız olması, kaçanların uzak/küçük araçlar olduğunu düşündürüyor. Mesafe bazlı analizle doğrulanacak.
-- **Motosiklet en zayıf sınıf:** Eğitim verisinin sadece %0,35'i.
+## 4. Veri
 
-**Mesafe bazlı recall (gece, güven ≥ 0,10):** Işık sınıfları uzak mesafede belirleyici. 166–249 m'de (220 m hedefi) yalnızca araç kutusuyla recall **0,28**, araç kutusu veya far/arka lamba tespitiyle **0,75**.
-
-| Mesafe | < 31 m | 62–83 m | 125–166 m | 166–249 m |
-|---|---|---|---|---|
-| Sadece araç kutusu | 0,93 | 0,75 | 0,54 | 0,28 |
-| Araç kutusu veya ışığı | 0,97 | 0,91 | 0,83 | **0,75** |
-
-REQ-F-01 (220 m'de ≥ 0,90) için 15 puan eksik. Faz 3'ün odağı bu.
-
-**Faz 3: Uzak mesafe deneyleri.** Gece, 166–249 m, güven ≥ 0,10, araç kutusu veya ışığı.
-
-| Deney | Yöntem | Recall | Yanlış alarm / kare | Sonuç |
-|---|---|---|---|---|
-| 1b | Temel model, tam kare | 0,75 | 2,87 | referans |
-| **2** | **+ ufuk bandı dilimleme** (384 px parçalar, 2x büyütme) | **0,85** | 4,27 | ✅ +10 puan, gecikme bedeli var |
-| 3 | Sözde etiketleme (öğretmen model + dilimleme) | 0,75 | 2,88 | ❌ etki yok |
-| 4 | P2 tespit kafası (stride 4, +%33 hesap) | 0,74 | 2,90 | ❌ etki yok |
-| 5 | Tam kareyi 2x büyütme (imgsz 2560) | 0,79 | 3,03 | ⚠️ +4 puan, 4 kat maliyet |
-
-Başarısız deneyler de bilgi verdi. Uzak araçları bulduran şey ne daha fazla etiket (Deney 3), ne daha ince özellik haritası (Deney 4), ne de yalnızca büyütme (Deney 5). Belirleyici olan, uzak bölgeye **ayrıca ve dar bir kadrajla** bakmak. Bu yüzden dilimleme kalıcı oldu ([ADR-015](docs/decisions.md)). Ek gecikmesi Faz 4'te takip ile düşürülecek: bant iki karede bir işlenecek. Tek karelik yanlış alarmlar da kare tutarlılığıyla elenecek.
-
-**Faz 4: Video üzerinde sistem değerlendirmesi.** BDD100K'nın her etiketli görüntüsü kendi videosunun 10. saniyesindeki karedir. Test setimizdeki görüntülerin videoları (MOT 2020 kareleri, 5 fps) bulundu ve etiketli kare görüntü benzerliğiyle eşlendi. Sızıntı yok: model bu videoları hiç görmedi. Sistem burada ADB düzeyinde ölçülüyor: karşıdaki araç kamaştırılıyor mu, uzun far ne kadar açık, far yanıp sönüyor mu?
-
-Otoyol ve yerleşim alanı, 20 gece videosu, far kararı ayarı güven 0,35 ve histerezis 1,0 sn ([ADR-017](docs/decisions.md)):
-
-| | Tam kare | Takip ile |
-|---|---|---|
-| Titreme / dk (hedef ≤ 2) | 3,8 | **1,2** ✅ |
-| Uzun far kullanımı | 0,57 | **0,65** |
-
-**Kamaşma teşhisi** (68 gece videosu, Deney 7): far kapsamındaki 550 aracın 11'i açık segmentte kaldı. Her ihlal sebebine göre ayrıldı ve görseli çıkarıldı:
-
-| | Araç | İhlal | Sebep |
-|---|---|---|---|
-| Lambası yanan (sürücülü) | 374 | **%1,3** | 4/5 bozuk görüntü (ıslak cam, sarsıntı) |
-| Işıksız, park etmiş | 176 | %3,4 | Kamaşacak sürücü yok |
-| **Geometri hatası** | | **0** | Araç bulunduğunda doğru segment her seferinde kısıldı |
-
-Bozuk görüntüyü yakalayıp kısa fara dönmek güvenlik izleyicinin işi. Ama dört basit görüntü kalitesi ölçüsünün hiçbiri iki bozuk videoyu tutarlı şekilde ayırmadı. Hareket bulanıklığı ışıkları yumuşatmıyor, keskin çizgilere çeviriyor. Bu yüzden bulanıklık kontrolü açılmadı (Deney 8, [ADR-018](docs/decisions.md)).
-
-Bulgular:
-- **Takip yanlış alarm süzgeci olarak işe yaramadı** (−%9). Yanlış alarmların %55–65'i kalıcı: sokak lambası, yansıma, etiketsiz uzak araç. Bu yüzden yanlış alarm görünüşe dayalı doğrulamayla çözülecek ([ADR-016](docs/decisions.md)).
-- **Far kararında takip ve histerezis birlikte** titremeyi hedefe indiriyor. Histerezis süresi taramayla 1,0 sn seçildi ([ADR-017](docs/decisions.md)).
-- **Ölçüm sahneye bağlı:** şehir içi gece karelerinde segmentlerin %82'si zaten kısık, metrikler modları ayırt etmiyor. Gerçek ADB şehir içinde devre dışıdır.
-
-**Faz 5: TensorRT (Deney 9).** RTX 5050, TensorRT 10.16 FP16, yalnızca motor (veri aktarımı dahil):
-
-| Motor | p50 | p95 | p99 |
-|---|---|---|---|
-| Tam kare 736×1280 (CUDA Graph) | 3,2 ms | 3,4 ms | 3,9 ms |
-| Ufuk bandı 4 × 704×768 | 7,8 ms | 8,5 ms | 9,3 ms |
-
-Kare yerine dikdörtgen giriş piksellerin %42'lik dolgusunu kaldırdı. CUDA Graph, Faz 3–4'teki gecikme dalgalanmasının kaynağını (CPU'nun çekirdek başlatma süresi) ortadan kaldırdı.
-
-**FP16 doğruluğu korudu (Deney 10):** 166–249 m recall bantlı 0,848 → 0,850, yanlış alarm aynı, video sistem metrikleri (kamaşma, kullanım, titreme) birebir aynı, mAP50 farkı ≤ 0,6 puan.
-
-**Uçtan uca hat (Deney 11–12):** Ultralytics ile bant her karede p95 81 ms; darboğaz motor değil, CPU'daki parça hazırlama ve ön/son işleme. Bunlar GPU'ya taşınıp motorlar CUDA Graph ile çalıştırılınca (`--backend trt`, ADR-021):
-
-| Bant her karede | Ultralytics | GPU hattı + CUDA Graph |
-|---|---|---|
-| Uçtan uca p50 | 53,9 ms | **16,2 ms** |
-| Uçtan uca p95 (hedef ≤ 50) | 81,2 ms ❌ | **20,4 ms** ✅ |
-
-Ortalama 16,6 ms, ~60 FPS. Çıktı Ultralytics yoluyla aynı (tam kare birebir). Bant artık her karede işleniyor (ADR-016 kapandı).
-
-Tam tablolar, ışık sınıfı sonuçları ve sınırlamalar: [docs/results.md](docs/results.md)
-
-## Veri ve etiketleme
-
-**Kaynak:** [BDD100K](https://bdd-data.berkeley.edu/) tespit veri seti. 80.000 etiketli görüntü, zaman (gündüz/gece/alacakaranlık) ve hava etiketli.
+**Kaynak:** [BDD100K](https://bdd-data.berkeley.edu/) tespit veri seti; zaman (gündüz / gece / alacakaranlık) ve hava etiketli 80.000 görüntü.
 
 | Bölüm | Kaynak | Görüntü | Gece |
 |---|---|---|---|
@@ -152,22 +101,18 @@ Tam tablolar, ışık sınıfı sonuçları ve sınırlamalar: [docs/results.md]
 | val | BDD train %10 (koşul oranları korunarak) | 6.997 | %40 |
 | test | BDD val | 10.000 | %39 |
 
-**Bulgu: BDD gece etiketlerinde uzak araçlar eksik.** Gece ve gündüz etiket yoğunluğu mesafeye göre karşılaştırıldığında ([`box_size_stats.py`](scripts/box_size_stats.py)):
+**Bulgu: gece etiketlerinde uzak araçlar eksik.** Gece ve gündüz etiket yoğunluğu mesafeye göre karşılaştırıldığında, uzakta gece etiketleri gecenin doğal trafik oranının da çok altına düşüyor. Etiketsiz uzak araçlar eğitimde "arka plan" sayıldığı için model onları bastırmayı öğreniyor ([ADR-007](docs/decisions.md)).
 
-| Mesafe (yaklaşık) | < 62 m | 125–166 m | 166–249 m | > 249 m |
-|---|---|---|---|---|
-| Gece / gündüz etiket oranı | %83–88 | %55 | %37 | %29 |
+<p align="center"><img src="docs/media/label_gap.png" width="560" alt="Gece/gündüz etiket oranı mesafeyle düşüyor: %85'ten %29'a"></p>
 
-Yakın mesafedeki ~%85, gecenin doğal trafik oranı. Uzakta etiketler bunun da altına düşüyor. Etiketsiz uzak araçlar eğitimde "arka plan" sayıldığı için model onları bastırmayı öğreniyor. ([ADR-007](docs/decisions.md))
+**Far ve arka lamba etiketleri otomatik** ([`scripts/autolabel_lights.py`](scripts/autolabel_lights.py), [ADR-008](docs/decisions.md)). BDD'de ışık etiketi yok; elle nokta etiketleme kare başına 2–4 dakika sürdü (1.000 kare ≈ 30–60 saat). Bunun yerine:
+1. Parlak ve çevresinden belirgin lekeler bulunur (parlaklık eşiği + top-hat filtresi).
+2. Leke, **insanın çizdiği** bir araç kutusunun alt %75'indeyse o aracın ışığıdır: kırmızıysa `tail_light`, değilse `head_light`. Üst kısım hariç tutulur, ön cam yansımaları ışık sayılmaz.
+3. Sonuç: ~29.000 gece/alacakaranlık karesinde kare başına ~17 ışık etiketi.
 
-**Otomatik far/lamba etiketleme** ([`autolabel_lights.py`](scripts/autolabel_lights.py), [ADR-008](docs/decisions.md)):
-1. Parlak ve çevresinden belirgin lekeler bulunur (parlaklık eşiği + beyaz top-hat filtresi).
-2. Leke, **insan tarafından çizilmiş** bir BDD araç kutusunun alt %75'indeyse o aracın ışığıdır. Kırmızı halka → `tail_light`, değilse → `head_light`. Üst kısım hariç tutulur, ön cam yansımaları ışık sayılmaz.
-3. Sonuç: ~29.000 gece/alacakaranlık karesinde kare başına ~17 ışık etiketi, elle iş olmadan.
+Otomatik sokak lambası etiketleri kare başına ~65 gürültülü kutu ürettiği için çıkarıldı ([ADR-009](docs/decisions.md)).
 
-Elle nokta etiketleme denendi, kare başına 2–4 dakika sürdü (1.000 kare ≈ 30–60 saat). Otomatik yöntem bu yüzden seçildi. Otomatik `street_light` etiketleri kare başına ~65 gürültülü kutu ürettiği için çıkarıldı. Sokak lambaları eğitimde arka plan olarak kalıyor ([ADR-009](docs/decisions.md)).
-
-## Model ve eğitim
+## 5. Model ve eğitim
 
 | | |
 |---|---|
@@ -176,14 +121,100 @@ Elle nokta etiketleme denendi, kare başına 2–4 dakika sürdü (1.000 kare �
 | Sınıflar | car, truck, bus, motorcycle, bicycle, person, head_light, tail_light |
 | Eğitim verisi | 25.000 kare: %75 gece, %10 alacakaranlık, %15 gündüz ([ADR-010](docs/decisions.md)) |
 | Donanım | Kaggle 2× T4, 11 saat, batch 16, AMP |
+| Dağıtım | TensorRT 10.16 FP16, iki sabit boyutlu motor (tam kare + bant), CUDA Graph |
 
-İki eğitim yolu var:
-- **Kaggle:** [`kaggle/adb_kaggle_train.ipynb`](kaggle/adb_kaggle_train.ipynb). Verileri kendisi bulur, salt okunur girdiyi yönetir, 12 saatlik oturuma sığar. Adımlar: [kaggle/README.md](kaggle/README.md)
-- **Yerel:** [`train/train_baseline.py`](train/train_baseline.py). Ön kontrol (GPU, RAM, Windows disk belleği), otomatik işçi sayısı ve uyku engeli içerir.
+| Koşul (test) | Görüntü | mAP50 | car | truck | motorcycle | person |
+|---|---|---|---|---|---|---|
+| Gündüz | 4.435 | 0,61 | 0,84 | 0,62 | 0,40 | 0,69 |
+| **Gece** | 3.363 | 0,59 | **0,79** | 0,59 | 0,44 | 0,64 |
+| Yağmurlu gece | 566 | 0,59 | 0,79 | 0,62 | 0,46 | 0,62 |
+| Alacakaranlık | 648 | 0,62 | 0,84 | 0,62 | 0,41 | 0,65 |
 
-## Kurulum ve kullanım
+Gece ile gündüz arasındaki fark yalnızca 1,6 puan: gece ağırlıklı eğitim listesi işe yaradı.
 
-### Kurulum
+## 6. Geliştirme yolculuğu: 6 faz, 12 deney
+
+Her deneyin ayrıntısı [docs/results.md](docs/results.md)'de, her kararın gerekçesi [docs/decisions.md](docs/decisions.md)'de (21 ADR), karşılaşılan sorunlar ve çözümleri [docs/devlog.md](docs/devlog.md)'de.
+
+### Faz 0–2 · Kapsam, veri, temel model
+
+Gereksinimler kimlik numaralarıyla yazıldı (REQ-F/P/S), veri hazırlandı, ışık etiketleri otomatik üretildi, temel model eğitildi. Koşul bazlı test, darboğazın her koşulda ~0,53 olan **recall** olduğunu gösterdi. Mesafe bazlı analiz kaçan araçların uzak araçlar olduğunu doğruladı: ışık sınıfları olmadan 220 m'de recall yalnızca 0,28, ışıklarla 0,75.
+
+### Faz 3 · Uzak araçlar
+
+Uzak araçları bulmak için dört yöntem denendi. Daha fazla etiket (sözde etiketleme), daha ince özellik haritası (P2 kafası) ve yalnızca büyütme işe yaramadı. Belirleyici olan, uzak bölgeye **ayrıca ve dar bir kadrajla** bakmaktı.
+
+<p align="center"><img src="docs/media/phase3_experiments.png" width="620" alt="Faz 3 deneyleri: ufuk bandı dilimleme 0,85, diğerleri 0,74–0,79"></p>
+<p align="center"><img src="docs/media/recall_distance.png" width="640" alt="Gece mesafe bazlı recall: ufuk bandı uzak mesafede tam kareden belirgin yüksek"></p>
+
+### Faz 4 · Video üzerinde ADB sistemi
+
+BDD100K'nın her etiketli görüntüsü kendi videosunun bir karesi. Test görüntülerinin videoları bulundu ve etiketli kare görüntü benzerliğiyle eşlendi (sızıntı yok: model bu videoları görmedi). Sistem burada ADB düzeyinde ölçüldü: karşıdaki araç kamaştırılıyor mu, uzun far ne kadar açık, far yanıp sönüyor mu?
+
+| Otoyol + yerleşim, 20 gece videosu | Tam kare | Takip ile |
+|---|---|---|
+| Titreme / dk (hedef ≤ 2) | 3,8 | **1,2** ✅ |
+| Uzun far kullanımı | %57 | **%65** |
+
+**Kamaşma teşhisi** (68 gece videosu): far kapsamındaki her araç için ihlal varsa sebebi ayrıldı ve görseli çıkarıldı. Lambası yanan 374 araçta ihlal **%1,3**; bunların 4/5'i iki bozuk videodan (ıslak ön cam, kamera sarsıntısı). **Geometri kaynaklı ihlal sıfır.** Bozuk görüntüyü basit görüntü kalitesi ölçüleriyle yakalamak denendi, tutarlı ayıramadı; bulanıklık kontrolü bu yüzden kapalı ([ADR-018](docs/decisions.md)).
+
+### Faz 5 · Gerçek zamanlılık
+
+Model TensorRT FP16'ya çevrildi: tam kare ve bant için iki ayrı sabit boyutlu motor ([ADR-019](docs/decisions.md)). FP16 doğruluğu korudu (220 m recall 0,848 → 0,850, sistem metrikleri birebir aynı). Ama hat yine yavaştı: **darboğaz model değil, CPU'daki ön/son işlemeydi.** Bunlar GPU'ya taşınıp motorlar CUDA Graph ile çalıştırılınca gecikme dörtte birine indi ([ADR-021](docs/decisions.md)).
+
+<p align="center"><img src="docs/media/latency.png" width="720" alt="Uçtan uca gecikme: Ultralytics p95 81 ms, GPU hattı + CUDA Graph p95 20 ms"></p>
+
+Bu süreçte iki bulgu daha çıktı:
+- Faz 3–4'teki gecikme dalgalanmasının kaynağı CPU'nun çekirdek başlatma süresiydi; CUDA Graph bunu kaldırdı (p99 8,8 → 2,8 ms).
+- GPU hattı ilk ölçümde Ultralytics'ten %13 fazla kutu verdi. Adım adım karşılaştırma ([`eval/compare_backends.py`](eval/compare_backends.py)) farkı NMS eşiğinde buldu; düzeltilince çıktı birebir aynı.
+
+C++ portu ve Jetson ölçümü gelecek çalışma olarak bırakıldı ([ADR-021](docs/decisions.md)).
+
+### Faz 6 · Doğrulama, risk analizi, demo
+
+Aşağıda.
+
+## 7. Doğrulama ve risk analizi
+
+**Gereksinim doğrulama matrisi** ([docs/verification.md](docs/verification.md)), [`eval/verify_requirements.py`](eval/verify_requirements.py) ile otomatik üretiliyor: her gereksinim için hedef, ölçülen değer, durum ve kanıt (sonuç dosyası veya birim testi). Script ilgili testleri kendisi çalıştırıyor.
+
+<p align="center"><img src="docs/media/verification.png" width="760" alt="Gereksinimlerin durum özeti"></p>
+
+Doğrulama iki eksiği de ortaya çıkardı ve ikisi de matriste açıkça yazıyor:
+- **REQ-F-08** (takip hızıyla 50 ms öngörü) kodda hiç yok. Etkisi hesaplandı: yalnızca 30 m'nin altında, yanal hızlı geçen araçta 1° payı aşıyor.
+- **REQ-S-03** (eşik altı tespitin bölgesini de kısmak) bilinçli olarak karşılanmıyor: düşük eşik yanlış kısmayı ve titremeyi artırdı ([ADR-017](docs/decisions.md)).
+
+**FMEA** ([docs/fmea.md](docs/fmea.md)): 13 hata türü, şiddet × olasılık × tespit edilebilirlik. En yüksek riskler algılamada, karar mantığında değil:
+
+| Risk | RPN | Durum |
+|---|---|---|
+| Bozuk görüntüde (ıslak cam, sarsıntı) araç kaçırılır | 288 | önlem yok; görüntü kalitesi sınıflandırıcısı veya yağmur sensörü sinyali gerekli |
+| Kamera kalibrasyonu / montaj hatası | 256 | gerçek kamera yok; 1° pay kısmen karşılıyor |
+| Uzak araç (166–249 m) kaçırılır | 240 | ufuk bandı ile %85; insan etiketli uzak araç verisi gerekli |
+
+Riskleri destekleyen hata enjeksiyonu testleri: [`tests/test_requirements.py`](tests/test_requirements.py).
+
+**Demo.** Sistemin farklı bir kameradan, aydınlatılmış bir şehir otoyolundaki davranışı:
+
+<p align="center"><img src="docs/media/demo_frames.jpg" width="900" alt="Demo videosundan üç kare"></p>
+
+Bu video modelin eğitim verisinden farklı (1080p, bilinmeyen görüş açısı, sokak lambalı yol); demo olarak yararlı, ama ölçüm sonucu buradan çıkarılmıyor. Demo üreticisi: [`scripts/render_demo.py`](scripts/render_demo.py).
+
+## 8. Bilinen sınırlamalar
+
+- **Gömülü cihazda ölçülmedi.** Gecikme RTX 5050 dizüstü GPU'sunda (prizde, en iyi performans modunda). Jetson'da motorlar ONNX'ten yeniden derlenmeli ([ADR-002](docs/decisions.md)).
+- **Bozuk görüntü algılanmıyor.** Islak/kirli ön cam ve kamera sarsıntısı basit görüntü ölçüleriyle yakalanamadı; kamaşma ihlallerinin çoğu bu karelerden (Deney 8).
+- **Işık sınıflarının gerçek doğruluğu ölçülmedi.** Doğrulama etiketleri de otomatik; raporlanan değerler modelin otomatik etiketleyiciyi ne kadar taklit ettiğini gösteriyor.
+- **Mesafeler yaklaşık.** BDD100K'da mesafe etiketi yok; kutu genişliğinden, 60° görüş açısı varsayımıyla türetiliyor. Gerçek kamera kalibre edilmedi.
+- **Video verisi 5 fps**, gerçek kamera 30 fps; her videoda tek etiketli kare. Takip parametreleri kare cinsinden ve 5 fps'e göre ayarlı.
+- **Yanlış alarm ölçümü kötümser:** BDD'nin etiketlemediği uzak araçlar da yanlış alarm sayılıyor.
+- **Uzak araç örneği küçük:** video setinde 125 m ötesinde 42 araç.
+
+## 9. Kurulum ve kullanım
+
+<details>
+<summary><b>Kurulum</b></summary>
+
 ```powershell
 python -m venv .venv
 .venv\Scripts\activate          # Linux/macOS: source .venv/bin/activate
@@ -192,106 +223,96 @@ pip install -r requirements.txt
 python scripts/check_env.py      # GPU / CUDA / paket kontrolü
 pytest -q                        # birim testler
 ```
+TensorRT kurulumu (Windows, RTX 50 serisi): [deploy/README.md](deploy/README.md)
+</details>
 
-### Veri hazırlığı
+<details>
+<summary><b>Veri hazırlığı ve eğitim</b></summary>
+
 BDD100K'yı [resmi siteden](https://bdd-data.berkeley.edu/) indirip `data/raw/bdd100k/` altına aç (beklenen yapı: [data/README.md](data/README.md)).
 ```powershell
 python scripts/bdd_prepare.py --bdd data/raw/bdd100k --out data/bdd_adb --copy-images   # YOLO formatı + koşul listeleri
-python scripts/visualize_labels.py --split train --cond night                           # gözle kontrol
 python scripts/autolabel_lights.py                                                      # far/lamba etiketleri
+python train/train_baseline.py                                                          # yerel eğitim
 ```
+Kaggle'da eğitim: [`kaggle/adb_kaggle_train.ipynb`](kaggle/adb_kaggle_train.ipynb), adımlar [kaggle/README.md](kaggle/README.md). Çıktıyı içe aktarma: `python scripts/import_kaggle_output.py --eval`
+</details>
 
-### Eğitim ve değerlendirme
-```powershell
-python train/train_baseline.py --check                                     # ön kontrol
-python train/train_baseline.py                                             # 8 saatlik eğitim
-python eval/eval_conditions.py --weights runs/baseline/weights/best.pt     # koşul bazlı test
-python eval/eval_distance.py --weights runs/baseline/weights/best.pt      # mesafe bazlı recall + yanlış alarm
-python scripts/horizon_band.py                                            # ufuk bandını veriden belirle
-python eval/eval_distance.py --weights runs/baseline/weights/best.pt --slice   # dilimlemeli
-```
+<details>
+<summary><b>Değerlendirme</b></summary>
 
-Kaggle'da eğitilen bir modelin çıktı zip'i doğrudan içe aktarılabilir. Klasöre açılmış `.pt` dosyaları otomatik olarak yeniden paketlenir:
 ```powershell
-python scripts/import_kaggle_output.py --eval
-```
-
-Video üzerinde sistem değerlendirmesi (takip + far kararı):
-```powershell
-python scripts/prepare_video_eval.py --frames data/bdd100k/images/track      # MOT 2020 kareleri + etiketli kare eşleme
-python scripts/scene_index.py                                                 # sahne türleri (otoyol, şehir içi ...)
+python eval/eval_conditions.py --weights runs/baseline/weights/best.pt                 # koşul bazlı mAP
+python eval/eval_distance.py --weights runs/baseline/weights/best.pt --slice           # mesafe bazlı recall
+python scripts/prepare_video_eval.py --frames data/bdd100k/images/track                # video değerlendirme verisi
 python eval/eval_video.py --weights runs/baseline/weights/best.pt --scenes highway residential
-python eval/eval_video.py --weights runs/baseline/weights/best.pt --sweep-conf 0.15 0.25 0.35 0.5 --sweep-release 0.5 1 2
-python eval/diagnose_glare.py --weights runs/baseline/weights/best.pt         # her kamaşma ihlali için sebep + görsel
-python eval/calibrate_safety.py --diag runs/baseline/glare_diag/summary.json  # görüntü kalitesi ölçüleri
+python eval/diagnose_glare.py --weights runs/baseline/weights/best.pt                  # kamaşma ihlali sebepleri + görseller
 ```
+</details>
 
-TensorRT ve gerçek zamanlı hat (Faz 5; kurulum ve ayrıntılar: [deploy/README.md](deploy/README.md)):
+<details>
+<summary><b>TensorRT, gerçek zamanlı hat ve demo</b></summary>
+
 ```powershell
-python deploy/export.py --val                                                  # FP16 motorlar: tam kare, bant, mAP için kare
-python eval/eval_distance.py --weights deploy/models/full_fp16.engine --band-weights deploy/models/band_fp16.engine --conds night --slice --backend trt
-python eval/bench_latency.py --weights deploy/models/full_fp16.engine --band-weights deploy/models/band_fp16.engine --backend trt
+python deploy/export.py --val                     # FP16 motorlar: tam kare, bant, mAP için kare
+$e = "--weights deploy/models/full_fp16.engine --band-weights deploy/models/band_fp16.engine --backend trt"
+python eval/eval_distance.py $e.Split() --conds night --slice
+python eval/bench_latency.py $e.Split()           # aşama aşama uçtan uca gecikme
+python eval/verify_requirements.py                # doğrulama matrisi -> docs/verification.md
+python scripts/render_demo.py --source video.mp4 --hfov 70
+powershell -ExecutionPolicy Bypass -File scripts/faz6_final.ps1   # Faz 6'nın tamamı tek komutta
 ```
+Şekiller: `python scripts/make_figures.py` (veri: [docs/data/](docs/data/)) ve `python scripts/make_readme_media.py`.
+</details>
 
-## Repo yapısı
+## 10. Repo yapısı ve dokümanlar
+
+<details>
+<summary><b>Repo yapısı</b></summary>
 
 ```
 adb-night-perception/
-├── adb/            geometri (piksel→açı, paralaks), ufuk bandı dilimleme, takip, far kararı, güvenlik izleyici
-├── configs/        system.yaml (kamera, far, eşikler, hedefler), classes.yaml, slicing.yaml, models/ (P2 mimarisi)
-├── scripts/        veri hazırlama, otomatik etiketleme, analiz ve yardımcı araçlar
-├── train/          yerel eğitim
-├── kaggle/         Kaggle notebook'u ve eğitim scripti
-├── eval/           koşul ve mesafe bazlı değerlendirme, yanlış alarm, video üzerinde ADB sistem metrikleri
-├── deploy/         ONNX → TensorRT motorları, INT8 kalibrasyonu, C++ (Faz 5)
-├── docs/           gereksinimler, mimari, kararlar (ADR), literatür, sonuçlar
-├── tests/          birim testler
+├── adb/            geometri, ufuk bandı dilimleme, takip, far kararı, güvenlik izleyici, model yükleme, GPU hattı
+├── configs/        system.yaml (kamera, far, eşikler, hedefler), classes.yaml, slicing.yaml
+├── scripts/        veri hazırlama, otomatik etiketleme, analiz, demo ve şekiller
+├── train/ kaggle/  yerel ve Kaggle eğitimi
+├── eval/           koşul / mesafe / video değerlendirmesi, gecikme, doğrulama matrisi
+├── deploy/         ONNX → TensorRT motorları, INT8 kalibrasyonu
+├── docs/           gereksinimler, mimari, kararlar, sonuçlar, doğrulama, FMEA, şekiller (media/) ve verileri (data/)
+├── tests/          birim, gereksinim ve hata enjeksiyonu testleri
 └── data/           (repoda yok) veri setleri
 ```
-
-## Mühendislik dokümanları
+</details>
 
 | Doküman | İçerik |
 |---|---|
 | [requirements.md](docs/requirements.md) | Kimlik numaralı gereksinimler (REQ-F/P/S), piksel bütçesi, çalışma alanı (ODD) |
-| [architecture.md](docs/architecture.md) | Modüller, arayüzler, karşılaştırılacak algılama mimarileri |
+| [architecture.md](docs/architecture.md) | Modüller ve arayüzler |
 | [decisions.md](docs/decisions.md) | 21 karar kaydı (ADR): bağlam, karar, sonuç |
+| [results.md](docs/results.md) | Deney 1–12: tablolar ve gözlemler |
+| [verification.md](docs/verification.md) | Gereksinim doğrulama matrisi |
+| [fmea.md](docs/fmea.md) | Hata türleri ve etkileri analizi |
+| [devlog.md](docs/devlog.md) | Geliştirme günlüğü: sorunlar, çözümler, çözülemeyenler |
 | [literature.md](docs/literature.md) | SmartBeam, PVDN, 2PCNet, SAHI vb. ve projeye katkıları |
-| [results.md](docs/results.md) | Deney sonuçları ve gözlemler (Deney 1–8) |
-| [devlog.md](docs/devlog.md) | Geliştirme günlüğü: karşılaşılan sorunlar, çözümler, çözülemeyenler |
-| [verification.md](docs/verification.md) | Gereksinim doğrulama matrisi: her REQ için hedef, ölçülen, durum, kanıt (`eval/verify_requirements.py`) |
-| [fmea.md](docs/fmea.md) | Hata türleri ve etkileri analizi: 13 hata türü, şiddet × olasılık × tespit, önlemler |
-
-## Yol haritası
+| [deploy/README.md](deploy/README.md) | TensorRT kurulumu, motorlar, gecikme ölçümü |
 
 | Faz | İçerik | Durum |
 |---|---|---|
 | 0 | Kapsam, gereksinimler, altyapı | ✅ |
 | 1 | Veri hazırlığı, otomatik far/lamba etiketleri | ✅ |
 | 2 | Temel model, koşul ve mesafe bazlı değerlendirme | ✅ |
-| 3 | Uzak araç iyileştirmesi: dilimleme ✅, sözde etiketleme ❌, P2 kafası ❌, giriş büyütme ⚠️ | ✅ |
-| 4 | Takip ✅, far kararı ✅, video üzerinde sistem metrikleri ✅, kamaşma teşhisi ✅, güvenlik izleyici ✅ (bulanıklık hariç) | ✅ |
-| 5 | TensorRT FP16 motorları ✅, doğruluk eşitliği ✅, GPU'da ön/son işleme + CUDA Graph ✅ (p95 20 ms), INT8 (ertelendi), C++ ve Jetson (gelecek çalışma) | ✅ |
-| 6 | Doğrulama matrisi, FMEA ✅, hata enjeksiyonu testleri ✅, son ölçümler ⏳, demo videosu ⏳ | 🔄 |
+| 3 | Uzak araç: dilimleme ✅, sözde etiketleme ❌, P2 kafası ❌, giriş büyütme ⚠️ | ✅ |
+| 4 | Takip, far kararı, video üzerinde sistem metrikleri, kamaşma teşhisi, güvenlik izleyici | ✅ |
+| 5 | TensorRT FP16, doğruluk eşitliği, GPU'da ön/son işleme + CUDA Graph (p95 20 ms) | ✅ |
+| 6 | Doğrulama matrisi, FMEA, hata enjeksiyonu testleri, demo | ✅ |
+| Gelecek | C++ portu, Jetson ölçümü, REQ-F-08 öngörü, görüntü kalitesi sınıflandırıcısı, insan etiketli uzak araç seti | |
 
-## Bilinen sınırlamalar
+## 11. Lisans ve kaynaklar
 
-- **Işık sınıflarının gerçek doğruluğu ölçülmedi.** Doğrulama etiketleri de otomatik üretildiği için raporlanan değerler modelin otomatik etiketleyiciyi ne kadar taklit ettiğini gösteriyor. İnsan kontrollü ~150 karelik bir set planlandı.
-- **Mesafeler yaklaşık.** BDD100K'da mesafe etiketi yok. Mesafe kutu genişliğinden, varsayılan kamera parametreleriyle (60° HFOV) türetiliyor.
-- **Gömülü performans henüz ölçülmedi.** Jetson'da doğrulanana kadar FPS iddiası yapılmıyor ([ADR-002](docs/decisions.md)).
-- **Otomatik ışık etiketlerinde gürültü var.** Yol yüzeyindeki far yansıması bazen tek, büyük bir ışık kutusu olarak etiketleniyor. Park halindeki araç gövdelerindeki yansımalar da ışık sayılabiliyor. Ayrı bir etiket temizliği deneyi planlandı.
-- **Yanlış alarm ölçümü kötümser.** BDD'nin etiketlemediği uzak araçlar da yanlış alarm sayılıyor (ADR-007).
-- **Bozuk görüntü algılanmıyor.** Islak/kirli ön cam ve kamera sarsıntısı basit görüntü ölçüleriyle yakalanamadı (Deney 8). Kamaşma ihlallerinin çoğu bu karelerden geliyor. Çözüm muhtemelen etiketli bozuk görüntülerle eğitilmiş bir kalite sınıflandırıcısı ya da araç sinyalleri (yağmur sensörü, silecek).
-- **Video verisi 5 fps.** Gerçek kamera 30 fps. Kareler arası kayma 6 kat büyük, takip burada daha zor. Etiket her videoda tek karede.
-- **Uzak araç örneği küçük:** video setinde 125 m ötesinde 42 araç var. Bantın sistem düzeyindeki etkisi bu örnekle ayırt edilemedi.
-- **Gömülü cihazda ölçülmedi.** Gecikme RTX 5050 dizüstü GPU'sunda (prizde, en iyi performans modunda). Jetson'da motorlar ONNX'ten yeniden derlenmeli; Python'un yorumlayıcı yükü orada daha ağır olabilir. C++ portu gelecek çalışma (ADR-021).
-- **Reflektörler** (yansıyan tabelalar) otomatik etiketlenemiyor, model onları arka plan olarak öğreniyor.
+Kod **AGPL-3.0** lisanslıdır ([LICENSE](LICENSE)); sebebi, kullanılan [Ultralytics YOLO](https://github.com/ultralytics/ultralytics) kütüphanesinin AGPL-3.0 olması ([ADR-004](docs/decisions.md)).
 
-## Lisans
-
-Kod **AGPL-3.0** lisanslıdır ([LICENSE](LICENSE)). Sebebi, kullanılan [Ultralytics YOLO](https://github.com/ultralytics/ultralytics) kütüphanesinin AGPL-3.0 olması ([ADR-004](docs/decisions.md)).
-
-BDD100K görüntüleri ve etiketleri bu repoda **bulunmaz**. Kullanım koşulları için [BDD100K lisansına](https://bdd-data.berkeley.edu/) bakın.
+- **BDD100K:** görüntüler ve etiketler bu repoda **bulunmaz**; kullanım koşulları için [BDD100K lisansı](https://bdd-data.berkeley.edu/). README'deki şekiller yalnızca sayısal sonuçlardan üretildi.
+- **Demo videosu:** [Pexels](https://www.pexels.com/video/15119004/) (video 15119004), Pexels lisansıyla.
 
 ---
 

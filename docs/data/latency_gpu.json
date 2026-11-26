@@ -1,0 +1,126 @@
+{
+  "weights": "deploy/models/full_fp16.engine",
+  "band_weights": "deploy/models/band_fp16.engine",
+  "backend": "trt",
+  "cuda_graph": true,
+  "gpu": "NVIDIA GeForce RTX 5050 Laptop GPU",
+  "frames": 600,
+  "source": "gece videoları (videos.json)",
+  "warmup": 50,
+  "torch": "2.11.0+cu128",
+  "python": "3.12.10",
+  "budget_ms": 50.0,
+  "note": "Python hattı; kamera yakalama ve disk okuma hariç. ultralytics: ön/son işleme CPU'da; trt: ön/son işleme GPU'da (adb/trt_runtime.py)",
+  "results": {
+    "1": {
+      "tam kare": {
+        "mean": 4.79,
+        "p50": 4.5,
+        "p95": 5.96,
+        "p99": 6.66,
+        "max": 7.02
+      },
+      "bant": {
+        "mean": 10.51,
+        "p50": 10.1,
+        "p95": 13.7,
+        "p99": 14.57,
+        "max": 25.08
+      },
+      "birleştir": {
+        "mean": 0.18,
+        "p50": 0.17,
+        "p95": 0.23,
+        "p99": 0.27,
+        "max": 0.47
+      },
+      "takip": {
+        "mean": 0.77,
+        "p50": 0.71,
+        "p95": 1.47,
+        "p99": 1.63,
+        "max": 1.87
+      },
+      "karar": {
+        "mean": 0.11,
+        "p50": 0.11,
+        "p95": 0.2,
+        "p99": 0.22,
+        "max": 0.4
+      },
+      "izleyici": {
+        "mean": 0.21,
+        "p50": 0.2,
+        "p95": 0.26,
+        "p99": 0.29,
+        "max": 0.38
+      },
+      "TOPLAM": {
+        "mean": 16.57,
+        "p50": 16.23,
+        "p95": 20.39,
+        "p99": 21.9,
+        "max": 31.88
+      }
+    },
+    "2": {
+      "tam kare": {
+        "mean": 4.81,
+        "p50": 4.5,
+        "p95": 6.07,
+        "p99": 6.81,
+        "max": 8.9
+      },
+      "bant": {
+        "mean": 5.29,
+        "p50": 3.87,
+        "p95": 13.4,
+        "p99": 14.71,
+        "max": 15.55
+      },
+      "birleştir": {
+        "mean": 0.18,
+        "p50": 0.17,
+        "p95": 0.22,
+        "p99": 0.27,
+        "max": 0.37
+      },
+      "takip": {
+        "mean": 0.68,
+        "p50": 0.64,
+        "p95": 1.29,
+        "p99": 1.42,
+        "max": 1.54
+      },
+      "karar": {
+        "mean": 0.1,
+        "p50": 0.1,
+        "p95": 0.19,
+        "p99": 0.21,
+        "max": 0.3
+      },
+      "izleyici": {
+        "mean": 0.21,
+        "p50": 0.2,
+        "p95": 0.24,
+        "p99": 0.29,
+        "max": 0.4
+      },
+      "bant (işlenen kareler)": {
+        "mean": 10.58,
+        "p50": 10.1,
+        "p95": 13.98,
+        "p99": 15.09,
+        "max": 15.55
+      },
+      "TOPLAM": {
+        "mean": 11.26,
+        "p50": 10.3,
+        "p95": 19.56,
+        "p99": 21.31,
+        "max": 22.43
+      }
+    }
+  },
+  "tensorrt": "10.16.1.11"
+}

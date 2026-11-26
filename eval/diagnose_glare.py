@@ -138,7 +138,9 @@ def main():
     ap.add_argument("--data", type=Path, default=ROOT / "data/bdd_adb")
     ap.add_argument("--conds", nargs="+", default=["night", "night_adverse"])
     ap.add_argument("--scenes", nargs="+")
-    ap.add_argument("--mode", default="takip·tam", choices=["tam", "takip·tam", "tam+bant", "takip·tam+bant"])
+    ap.add_argument("--mode", default="takip·tam+bant", choices=["tam", "takip·tam", "tam+bant", "takip·tam+bant"],
+                    type=lambda s: s.replace("-", "·"),
+                    help="varsayılan: dağıtılan yapılandırma (takip, bant her karede; ADR-016). '·' yerine '-' de yazılabilir")
     ap.add_argument("--conf", type=float, help="far kararı güven eşiği (boş: system.yaml)")
     ap.add_argument("--release", type=float, help="histerezis (boş: system.yaml)")
     ap.add_argument("--warmup", type=int, default=15)
