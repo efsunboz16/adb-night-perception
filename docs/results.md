@@ -308,3 +308,125 @@ Deney 7'de ışıklı araç ihlallerinin 4/5'i iki bozuk videodan geldi: b1e2346
 2. **Işık lekesi uzaması** iki bozulmayı da bir ölçüm ayarında yakalıyor, ama aynı ayarda ikisini birden değil. Islak camı 6 karenin ortancası, sarsıntıyı tek kare yakalıyor. İki bozulma da anlık ve kareden kareye değişiyor.
 3. **Yalnızca 2 bozuk örnek var.** Bu iki videoya göre seçilen bir eşik verinin rastlantısına uyar, genellenmez.
 4. **Karar:** Bulanıklık kontrolü kapalı (`blur_laplacian_min: null`). REQ-S-02'nin bulanıklık kısmı açık. Gerçek çözüm muhtemelen etiketli bozuk görüntülerle eğitilmiş bir görüntü kalitesi sınıflandırıcısı ya da yağmur sensörü / silecek durumu gibi araç sinyalleri. Kamaşma hedefi (ışıklı araçlarda ≤ %1) bu yüzden karşılanmıyor: %1,3.
+## Deney 9 · TensorRT FP16 motor gecikmesi (Faz 5, `trtexec`)
+
+RTX 5050 Laptop (8 GB, Blackwell sm_120), TensorRT 10.16.1, CUDA 12.8. Prizde, Windows güç modu "En iyi performans". `trtexec --fp16 --warmUp=2000 --iterations=1000 --useSpinWait`, batch sabit. Ölçülen yalnızca motor: ön/son işleme, NMS, takip hariç.
+
+| Motor | Giriş | GPU hesaplama p50 | p95 | p99 | Veri aktarımı dahil p50 | p95 | p99 | Değişim katsayısı |
+|---|---|---|---|---|---|---|---|---|
+| Tam kare | 736×1280, batch 1 | 2,90 | 4,22 | 8,76 | 4,08 | 5,38 | 9,78 | %31,9 |
+| **Tam kare + CUDA Graph** | 736×1280, batch 1 | **2,31** | **2,33** | **2,78** | **3,23** | **3,36** | **3,86** | **%4,3** |
+| Bant | 4 × 704×768 | 5,56 | 5,84 | 5,95 | 7,76 | 8,53 | 9,29 | düşük |
+
+**Gözlemler:**
+1. **Algılama, tam kare + bant birlikte ~11 ms (p95 ~12 ms).** Deney 2'de aynı iş PyTorch ile 48,5 ms sürmüştü (okuma ve ön/son işleme dahil, bu yüzden doğrudan karşılaştırılamaz). 30 fps kare aralığı 33 ms, gecikme bütçesi 50 ms.
+2. **Tam kare dalgalanmasının kaynağı CPU.** CUDA Graph olmadan `trtexec` sıraya koyma (enqueue) süresinin GPU süresini aştığını bildirdi: küçük model çok sayıda kısa çekirdek çalıştırıyor, dizüstünün CPU güç yönetimi bu süreyi oynatıyor. CUDA Graph ile sıraya koyma ~3 ms'den ~0,01 ms'ye indi, p99 üçte bire düştü. Faz 3–4'teki 16–44 ms kararsızlığının da büyük ihtimalle kaynağı bu.
+3. **Bant tam karenin 1,9 katı** (CUDA Graph'sız ölçümle). Faz 3 tahminiyle (~1,7–2 kat) uyumlu. Bant batch 4 ile uzun ve az çekirdek çalıştırdığı için zaten kararlı.
+4. **Bantta veri aktarımı 2 ms:** giriş FP32, 4 parça 26 MB. C++ hattında görüntüyü 8 bit gönderip ölçekleme/normalizasyonu GPU'da yapmak aktarımı dörtte birine indirir.
+5. **Henüz ölçülmedi:** FP16'nın doğruluğa etkisi (mAP, uzak recall, kamaşma) ve Python hattının uçtan uca gecikmesi (`eval/bench_latency.py`). Bant zamanlaması kararı (ADR-016) bunlardan sonra verilecek.
+
+## Deney 10 · FP16 doğruluk eşitliği (TensorRT FP16 ve PyTorch, aynı görüntüler)
+
+Motorlar `deploy/export.py` ile (TensorRT 10.16.1, RTX 5050). PyTorch ölçümleri aynı gün aynı kodla tekrarlandı.
+
+**Mesafe bazlı recall, gece (3.363 görüntü), araç kutusu veya ışığı, güven ≥ 0,10** (PyTorch / FP16):
+
+| Mesafe | > 249 m (n=55) | 166–249 m (n=665) | 125–166 m (n=1.877) | 83–125 m (n=5.007) | Yanlış alarm / kare |
+|---|---|---|---|---|---|
+| Tam kare | 0,527 / 0,527 | 0,750 / 0,752 | 0,833 / 0,833 | 0,894 / 0,894 | 2,87 / 2,87 |
+| Tam kare + bant | 0,691 / 0,691 | **0,848 / 0,850** | 0,895 / 0,896 | 0,921 / 0,921 | 4,27 / 4,27 |
+
+Güven ≥ 0,25'te de tüm hücreler üç basamağa kadar aynı.
+
+**mAP50 (araç sınıfları)** (PyTorch / FP16). FP16 için kare 1280×1280 doğrulama motoru; PyTorch `val` dikdörtgen batch kullanıyor, dolgu farklı:
+
+| Koşul | Gündüz | Gece | Yağmurlu gece | Alacakaranlık |
+|---|---|---|---|---|
+| mAP50 | 0,609 / 0,611 | 0,593 / 0,589 | 0,594 / 0,588 | 0,621 / 0,617 |
+| car | 0,841 / 0,841 | 0,786 / 0,785 | 0,786 / 0,783 | 0,836 / 0,831 |
+
+**Video sistem metrikleri** (20 otoyol + yerleşim gece videosu, güven ≥ 0,25, histerezis 1,0 sn): kamaşma ihlali, uzun far kullanımı ve kısık segment oranı altı modun hepsinde PyTorch ile **birebir aynı**. Titreme (histerezisli) aynı; histerezissiz ham segment değişimi ±1,25/dk.
+
+**Gözlemler:**
+1. **FP16 uzak recall'ı korudu.** 220 m hedef bandında fark en fazla 2 tespit (665'te). Yanlış alarm aynı.
+2. **mAP farkı ≤ 0,6 puan**, yönü koşula göre değişiyor (gündüz +0,2, yağmurlu gece −0,6). Doğrulama motorunun kare dolgusu PyTorch'un dikdörtgen batch'inden farklı olduğu için bu fark tamamen hassasiyetten gelmiyor; recall ölçümü (aynı dikdörtgen giriş) daha doğrudan bir karşılaştırma.
+3. **Karar: FP16** (ADR-020). Sistem metrikleri birebir aynı.
+
+## Deney 11 · Python hattında uçtan uca gecikme (`eval/bench_latency.py`)
+
+RTX 5050, FP16 motorlar, 600 gece video karesi (50 ısınma), kareler bellekte. Ultralytics ön/son işleme dahil, CUDA Graph yok. Milisaniye.
+
+| Aşama | Bant her karede: p50 | p95 | Bant 2 karede bir: p50 | p95 |
+|---|---|---|---|---|
+| Tam kare | 9,6 | 15,3 | 6,7 | 10,9 |
+| Bant (işlendiği karede) | 36,7 | 58,0 | 21,1 | 30,2 |
+| Birleştir + takip + karar | 2,3 | 7,3 | 1,1 | 2,2 |
+| Güvenlik izleyici | 3,1 | 6,9 | 1,8 | 2,7 |
+| **Toplam** | **53,9** | **81,2** | **26,1** | **39,3** |
+
+**Gözlemler:**
+1. **REQ-P-06 (p95 ≤ 50 ms) Python'da yalnızca bant iki karede bir işlenirse karşılanıyor** (39,3 ms). 30 fps kare aralığına (33 ms) p95'te sığmıyor.
+2. **Gecikmenin çoğu motor dışında.** Bant motoru 7,8 ms (Deney 9), aşama 36,7 ms: ~29 ms parça kesme/büyütme, Ultralytics'in 4 parça için CPU'da yaptığı letterbox ve tensör dönüşümü, FP32 aktarım ve son işlem. Tam karede motor 3,2 ms, aşama 9,6 ms.
+3. **Güvenlik izleyicinin 3 ms'si tam çözünürlükte ortalama parlaklık hesabı.** Küçültülmüş gri görüntüde alınırsa ihmal edilir.
+4. **Yüzdelikler geniş** (p99 ≈ 1,7 × p50): Python ve CUDA Graph'sız çekirdek başlatma, Deney 9'daki dalgalanmanın aynısı.
+5. **Sonuç:** darboğaz model değil, Python'daki ön/son işleme. C++ hattında (CUDA'da ön işleme, 8 bit aktarım, CUDA Graph) motor süresine yakın bir toplam bekleniyor; bant zamanlaması kararı (ADR-016) C++ ölçümünden sonra. INT8 motor süresini kısaltır ama darboğazı çözmez.
+
+## Deney 12 · GPU hattı: ön/son işleme GPU'da, CUDA Graph (`--backend trt`, ADR-021)
+
+Aynı FP16 motorlar, aynı 600 gece video karesi (Deney 11 ile aynı ölçüm). Kare GPU'ya 8 bit bir kez gider; dolgu, bant parçaları, kutu çözümleme ve NMS GPU'da; motorlar Ultralytics'siz, TensorRT Python API'siyle. Milisaniye, bant her karede.
+
+| Aşama · p95 | Ultralytics (Deney 11) | GPU hattı, CUDA Graph yok | **GPU hattı + CUDA Graph** |
+|---|---|---|---|
+| Tam kare | 15,3 | 13,7 | **6,0** |
+| Bant | 58,0 | 25,7 | **13,7** |
+| Birleştir + takip + karar + izleyici | 14,2 | 6,9 | **1,9** |
+| **Toplam p50** | 53,9 | 29,2 | **16,2** |
+| **Toplam p95** | 81,2 | 42,7 | **20,4** |
+| Toplam p99 | 91,3 | 49,7 | **21,9** |
+
+Bant iki karede bir: toplam p50 10,3, p95 19,6 ms.
+
+**Doğruluk** (gece, 3.363 görüntü, güven ≥ 0,10; Ultralytics motor yolu / GPU hattı):
+
+| | 166–249 m recall | Yanlış alarm / kare |
+|---|---|---|
+| Tam kare | 0,752 / 0,752 | 2,87 / 2,87 (birebir aynı) |
+| Tam kare + bant | 0,850 / 0,851 | 4,27 / 4,30 |
+
+**Gözlemler:**
+1. **REQ-P-06 bant her karede işlenirken karşılanıyor:** p95 20,4 ms (hedef ≤ 50), 30 fps kare aralığına (33 ms) da sığıyor. Ortalama 16,6 ms, ~60 FPS (REQ-P-05: ≥ 25). Bu yüzden bant her karede işlenecek (ADR-016 kapandı).
+2. **Kazancın çoğu ön/son işlemeyi GPU'ya taşımaktan ve CUDA Graph'tan.** Bant aşaması 58 → 13,7 ms. Uyarı: CUDA Graph'sız çalıştırmada GPU kullanmayan takip ve karar adımları da 2–3 kat yavaş çıktı; o çalıştırmada CPU saat hızı da düşüktü, CUDA Graph'ın payı tablodakinden biraz küçük olabilir.
+3. **Tam kare çıktısı Ultralytics ile birebir aynı.** İlk ölçümde GPU hattı tam karede +%13 yanlış alarm verdi. `eval/compare_backends.py` adım adım ayırdı: ön işleme aynı (fark 2·10⁻⁵ gri seviye), CUDA Graph ham çıktısı aynı (fark 0), son işleme aynı çıktıdan aynı kutular. Fark Ultralytics `predict`'in NMS IoU eşiğindeydi: 0,5 (varsaydığımız 0,7 değil). Düzeltmeden sonra tüm hücreler aynı.
+4. **Bantta kalan küçük fark** (yanlış alarm +%0,7, recall +0,001): parça büyütmede cv2'nin sabit noktalı yuvarlamasıyla en fazla 1 gri seviyelik fark (birim testte ölçüldü).
+5. **Gecikme ölçümü NMS IoU 0,7 ile yapıldı.** Eşik değişikliği yalnızca NMS'e giren kutu sayısını etkiliyor (~50/kare), süreye etkisi ihmal edilebilir.
+
+## Deney 13 · Dağıtılan yapılandırmada sistem metrikleri (Faz 6)
+
+Yapılandırma: TensorRT FP16, GPU hattı, takip, **tam kare + bant her karede** (ADR-016, ADR-021), far kararı güven ≥ 0,35, histerezis 1,0 sn. Faz 4'ün sistem metrikleri bantsız ("takip · tam kare") ölçülmüştü; burada dağıtılan mod ölçülüyor. Gereksinim matrisi: [verification.md](verification.md).
+
+**Kamaşma ihlali** (68 gece videosu, `diagnose_glare.py`):
+
+| | Faz 4 (takip · tam kare, Deney 7) | **Faz 6 (takip · tam kare + bant)** |
+|---|---|---|
+| Lambası yanan araç | 5 / 374 (%1,3) | **3 / 374 (%0,8)** ✅ hedef ≤ %1 |
+| Sebep: görülmedi | 2 | **0** |
+| Sebep: düşük güven | 2 | 2 |
+| Sebep: takip onayı | 1 | 1 |
+| Işıksız, park etmiş araç | 6 / 176 (%3,4) | 6 / 176 (%3,4) |
+
+**Uzun far kullanımı ve titreme** (20 otoyol + yerleşim gece videosu, `eval_video.py`):
+
+| Mod | Uzun far kullanımı | Titreme / dk (histerezisli) |
+|---|---|---|
+| takip · tam kare | %65 | 1,25 |
+| **takip · tam kare + bant her karede** | **%63** | **5,0** |
+| takip · bant iki karede bir | %65 | 1,25–2,5 |
+
+**Gözlemler:**
+1. **Kamaşma hedefi bant her karedeyken karşılanıyor.** Faz 4'te "görülmedi" olarak kalan iki ışıklı araç (ıslak cam ve sarsıntılı videolarda) bantla bulundu. Fark 2 araç: yön tutarlı, ama örnek küçük. 3/374 için %95 güven aralığı (Wilson) %0,3–2,3; yani hedefin altında olduğu istatistiksel olarak kanıtlanmış değil, ölçülen değer hedefin altında.
+2. **Bedeli titreme.** Bant, uzakta kısa süre görünüp kaybolan tespitler ekliyor; histerezisli titreme 1,25 → 5,0 / dk. Bu ölçüm çok küçük bir örneğe dayanıyor: değerlendirilen video süresi toplam ~0,8 dakika, **bir olay 1,25 / dk** demek. Yani fark 1 olaya karşı 4 olay.
+3. **Karar: bant her karede kalıyor** (ADR-022). Gereksinimlerdeki asimetri (requirements.md §6): kamaştırma, gereksiz açılıp kısılmadan daha ağır bir hata. Titreme, 30 fps gerçek kayıtla ve bant tespitleri için ayrı bir onay kuralıyla yeniden ele alınmalı.
+4. **Uzun far kullanımı %63** (hedef %80): yanlış alarmların %55–65'i kalıcı ışık kaynakları (Deney 6); görünüşe dayalı doğrulama olmadan bu hedefe ulaşılamıyor.
+5. **Demo videoları** (Pexels, eğitim verisinden farklı kamera, 1080p, görüş açısı bilinmiyor; ölçüm için kullanılmadı):
+   - *Aydınlatmasız kırsal yol* (dosya 14299569, 115 sn): uzun far zamanın ~%67'sinde tamamen açık. Altı kısma olayı (35–41, 58–66, 79–87, 90–100, 106–109, 109–111 sn); görsel kontrolde beşi araç ışığı, biri (109–111 sn) yol kenarı reflektör dikmeleri: yanlış alarm (FM-07). 90–100 sn'deki araç geçişinde kısılan dilim aracı izliyor, geçişten 1 sn sonra uzun far tamamen açılıyor. Kare başına gecikme 11–17 ms.
+   - *Sokak lambalı, yoğun şehir otoyolu* (dosya 15119004): araçlar tüm far kapsamını doldurduğu için maske çoğu karede tamamen kısık; sahne için doğru davranış.

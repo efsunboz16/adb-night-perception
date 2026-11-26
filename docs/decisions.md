@@ -111,3 +111,33 @@ Her önemli teknik karar burada kısa olarak kayıt altına alınır: bağlam, k
 - **Bağlam:** Deney 8'de dört basit görüntü kalitesi ölçüsü iki bozuk videoyu (ıslak cam, sarsıntı) tutarlı şekilde ayırmadı. Uzama ölçüsü her birini ayrı ayarda yakaladı, ikisini birden değil. Pozitif örnek sayısı 2.
 - **Karar:** `safety_monitor.blur_laplacian_min: null`. Kalibre edilmemiş bir eşikle uzun farı kapatmak, ya hiçbir şey yakalamaz ya da sağlam videolarda sebepsiz kısa fara düşer. Diğer iki kontrol (kare gecikmesi, aşırı parlaklık) kalıyor.
 - **Sonuç:** REQ-S-02'nin bulanıklık kısmı ve kamaşma hedefi (ışıklı araç ≤ %1, ölçülen %1,3) açık. İleride: etiketli bozuk görüntülerle eğitilmiş kalite sınıflandırıcı veya araç sinyalleri (yağmur sensörü, silecek).
+## ADR-019 · Gömülü çıkarım: iki sabit boyutlu TensorRT motoru, dikdörtgen giriş, CUDA Graph
+- **Bağlam:** Faz 5. Tam kare ve ufuk bandı farklı boyutlarda çalışıyor. Ultralytics kare giriş kullanıyor (1280×1280); 720p karede piksellerin %42'si dolgu. Deney 9'da tam kare motorunun gecikmesi CPU tarafındaki çekirdek başlatma süresi yüzünden dalgalı çıktı (değişim katsayısı %32).
+- **Karar:**
+  1. İki ayrı motor: tam kare **736×1280, batch 1**; bant **704×768, batch 4** (352×384'lük 4 parça, 2x). Boyutlar `system.yaml` ve `slicing.yaml`'dan hesaplanır (`adb/models.py`).
+  2. Motorlar ONNX'ten kendi derleyicimizle üretilir (`deploy/build_engine.py`), Ultralytics meta verisi dosya başına yazılır: değerlendirme scriptleri motorları `.pt` gibi açar.
+  3. INT8 kalibrasyonu train bölümünden gece kareleriyle yapılır; bant motoru bant parçalarıyla kalibre edilir (test verisi kullanılmaz).
+  4. C++ hattında çıkarım CUDA Graph ile başlatılır.
+  5. Sabit boyutlu motora uymayan girdi sessizce yeniden ölçeklenmez, hata verir (uzak ışıklar ölçeklemeyle kaybolur).
+- **Sonuç:** Tam kare p99 8,8 → 2,8 ms, algılama toplamı ~11 ms. Motor dosyaları GPU'ya bağlı: Jetson'da ONNX'ten yeniden derlenir. Ultralytics `val` dikdörtgen girişi desteklemediği için mAP ayrı bir kare (1280×1280) doğrulama motoruyla ölçülür. Hassasiyet seçimi (FP16 / INT8) doğruluk eşitliği ölçülünce ADR-020'de.
+
+## ADR-020 · Hassasiyet: FP16; INT8 ertelendi
+- **Bağlam:** Deney 10'da TensorRT FP16 motorları PyTorch ile karşılaştırıldı. 166–249 m recall 0,848 → 0,850 (bantlı), yanlış alarm aynı, video sistem metrikleri birebir aynı, mAP50 farkı ≤ 0,6 puan. Deney 11'de Python hattının gecikmesinin çoğu motor dışında çıktı (bant aşaması 36,7 ms, motor 7,8 ms).
+- **Karar:** Dağıtım hassasiyeti **FP16**. INT8 şimdilik denenmiyor: motor süresi zaten bütçenin küçük bir kısmı, darboğaz ön/son işleme. INT8'in uzak ışıklar için riski (1–8 px'lik zayıf aktivasyonlar) bu kazanç için alınmaya değmez. Jetson gibi daha zayıf bir cihazda motor süresi darboğaz olursa yeniden açılır; derleyici hazır (`deploy/build_engine.py --precision int8`).
+- **Sonuç:** Sıradaki adım C++ hattı: CUDA'da ön işleme, 8 bit aktarım, CUDA Graph. Bant zamanlaması (ADR-016) C++ ölçümüyle kapanacak.
+
+## ADR-021 · C++ hattı yerine Python'da GPU hattı; C++ gelecek çalışma
+- **Bağlam:** Deney 11'de Python hattının gecikmesinin çoğu motor dışında çıktı: bant aşaması 36,7 ms, motoru 7,8 ms. Fark CPU'daki parça hazırlama, Ultralytics'in her parça için yaptığı ön/son işleme ve FP32 aktarım. Gereksinimler (REQ-P-05/06) bir dil değil, iki sayı istiyor. C++ hattı ~1–1,5 hafta; Faz 6 (doğrulama, FMEA, demo) projenin bütünlüğü için daha öncelikli.
+- **Karar:** C++ hattının kazandıracağı işler Python'da yapılır (`adb/trt_runtime.py`, `--backend trt`):
+  1. Kare GPU'ya bir kez, 8 bit gönderilir (sabitlenmiş bellek).
+  2. Tam kare dolgusu ve bant parçalarının kesilip 2x büyütülmesi GPU'da; Ultralytics/cv2 ile aynı formül (birim testlerle ≤ 1 gri seviye).
+  3. Motorlar Ultralytics'siz, TensorRT Python API'siyle, CUDA Graph ile çalışır.
+  4. Kutu çözümleme, eşik ve sınıf bazında NMS GPU'da; CPU'ya yalnızca kalan kutular iner.
+  Doğruluk, Ultralytics motor yoluyla aynı testlerle karşılaştırılır. C++ hattı README'de gelecek çalışma olarak kalır.
+- **Sonuç (Deney 12):** Bant her karede, uçtan uca p95 81,2 → **20,4 ms**, ortalama 16,6 ms (~60 FPS). Doğruluk Ultralytics yoluyla aynı (tam kare birebir; bantta yuvarlama kaynaklı ≤ %0,7 fark). NMS IoU, Ultralytics `predict`'in kullandığı 0,5'e eşitlendi. Python'un yorumlayıcı yükü (takip, far kararı) ~1 ms. Jetson'da Python yükü daha ağır olabilir; gömülü iddiası ADR-002'deki sınırlar içinde kalır.
+- **ADR-016 kapandı:** bant her karede işlenir. İki karede bir işlemenin gecikme gerekçesi kalmadı.
+
+## ADR-022 · Bant her karede: kamaşma lehine titreme bedeli
+- **Bağlam:** Faz 6'da dağıtılan yapılandırma ölçüldü (Deney 13). Bant her karede işlenince lambası yanan araçta kamaşma ihlali 5/374 → 3/374 (%1,3 → %0,8, hedef ≤ %1), ama histerezisli titreme 1,25 → 5,0 / dk (hedef ≤ 2). Titreme örneği çok küçük: toplam ~0,8 dakika, 1 olay = 1,25 / dk; fark 1 olaya karşı 4 olay.
+- **Karar:** Bant her karede işlenmeye devam eder. Gereksinimlerdeki hata asimetrisi (requirements.md §6) kamaştırmayı daha ağır sayıyor; gecikme bütçesi de bantı her karede kaldırıyor (Deney 12).
+- **Sonuç:** REQ-P-01 karşılanıyor, REQ-P-04 karşılanmıyor. Titreme için önerilen yol: 30 fps gerçek kayıtla ölçmek ve yalnız bantta görülen izler için daha uzun onay (ör. 3 görüş) denemek. ADR-016'nın "bant her karede" kapanışı bu kararla gerekçelendirildi.

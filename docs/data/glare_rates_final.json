@@ -1,0 +1,24 @@
+{
+ "mode": "takip·tam+bant",
+ "conf": 0.35,
+ "release_s": 1.0,
+ "videos": 68,
+ "backend": "trt",
+ "lit": {
+  "n": 374,
+  "violations": 3,
+  "by_cause": {
+   "düşük güven": 2,
+   "takip onayı": 1
+  }
+ },
+ "unlit": {
+  "n": 176,
+  "violations": 6,
+  "by_cause": {
+   "düşük güven": 4,
+   "takip onayı": 1,
+   "görülmedi": 1
+  }
+ }
+}

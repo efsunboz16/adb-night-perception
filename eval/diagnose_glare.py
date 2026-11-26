@@ -130,12 +130,17 @@ def draw(img, gt, vi, dec, thr, mask, cam, edges, title):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--weights", required=True)
+    ap.add_argument("--weights", required=True, help=".pt veya tam kare .engine")
+    ap.add_argument("--band-weights", help="bant motoru (.engine); yalnızca bantlı modlarda ve motorla gerekir")
+    ap.add_argument("--backend", choices=["ultralytics", "trt"], default="ultralytics",
+                    help="trt: motorlar doğrudan, ön/son işleme GPU'da (adb/trt_runtime.py)")
     ap.add_argument("--videos", type=Path, default=ROOT / "data/bdd_video/videos.json")
     ap.add_argument("--data", type=Path, default=ROOT / "data/bdd_adb")
     ap.add_argument("--conds", nargs="+", default=["night", "night_adverse"])
     ap.add_argument("--scenes", nargs="+")
-    ap.add_argument("--mode", default="takip·tam", choices=["tam", "takip·tam", "tam+bant", "takip·tam+bant"])
+    ap.add_argument("--mode", default="takip·tam+bant", choices=["tam", "takip·tam", "tam+bant", "takip·tam+bant"],
+                    type=lambda s: s.replace("-", "·"),
+                    help="varsayılan: dağıtılan yapılandırma (takip, bant her karede; ADR-016). '·' yerine '-' de yazılabilir")
     ap.add_argument("--conf", type=float, help="far kararı güven eşiği (boş: system.yaml)")
     ap.add_argument("--release", type=float, help="histerezis (boş: system.yaml)")
     ap.add_argument("--warmup", type=int, default=15)
@@ -144,7 +149,7 @@ def main():
     a = ap.parse_args()
 
     import cv2
-    from ultralytics import YOLO
+    from adb.models import load_detectors, run_dir_for
     from adb.slicing import load_slicing, merge, predict_band, predict_full
 
     sysc = load_config()
@@ -155,8 +160,8 @@ def main():
         vids = {k: v for k, v in vids.items() if sc.get(k) in a.scenes}
     use_band, tracked = "bant" in a.mode, a.mode.startswith("takip")
     cfg = load_slicing(ROOT / "configs/slicing.yaml") if use_band else None
-    model = YOLO(a.weights)
-    out_dir = Path(a.weights).resolve().parents[1] / "glare_diag"
+    model, band_model = load_detectors(a.weights, a.band_weights, a.imgsz, need_band=use_band, backend=a.backend)
+    out_dir = run_dir_for(a.weights, backend=a.backend) / "glare_diag"
     out_dir.mkdir(exist_ok=True)
     for f in out_dir.glob("*.jpg"):
         f.unlink()
@@ -177,7 +182,7 @@ def main():
             img = cv2.imread(str(f))
             raw = predict_full(model, img, 0.10, a.imgsz)
             if use_band:
-                raw = merge(raw, predict_band(model, img, cfg, 0.10))
+                raw = merge(raw, predict_band(band_model, img, cfg, 0.10))
             dec = tr.update(*raw)[:3] if tracked else raw
             mask = bc.step(*dec, i / a.fps)
         lbl = a.data / "labels" / v.get("split", "test") / f"{name}.txt"
@@ -221,6 +226,12 @@ def main():
         print(f"| **{'ışıklı' if lt else 'ışıksız'}** | **toplam** | {ntot} | {sum(tot.values())} | "
               f"**{sum(tot.values()) / max(ntot, 1):.3f}** | " + " | ".join(str(tot[k]) for k in CATS) + " |")
     (out_dir / "summary.json").write_text(json.dumps(rows, indent=1, ensure_ascii=False), encoding="utf-8")
+    rates = {"mode": a.mode, "conf": thr, "release_s": ref.release, "videos": len(vids), "backend": a.backend}
+    for lt, key in ((True, "lit"), (False, "unlit")):
+        rates[key] = {"n": sum(n_in[(d, lt)] for d, _, _ in DIST),
+                      "violations": sum(sum(cats[(d, lt)].values()) for d, _, _ in DIST),
+                      "by_cause": dict(sum((cats[(d, lt)] for d, _, _ in DIST), Counter()))}
+    (out_dir / "rates.json").write_text(json.dumps(rates, indent=1, ensure_ascii=False), encoding="utf-8")
     print(f"\nGörseller: {out_dir}  ({len(rows)} adet)")
 
 

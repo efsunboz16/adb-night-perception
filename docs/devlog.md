@@ -133,3 +133,60 @@ Hedef: gece 220 m'de recall 0,75 → 0,90. Dört yöntem denendi.
 - **Kamaşma ihlali, lambası yanan araçlarda %1,3, hedef ≤ %1.** Sebebi büyük ölçüde bozuk görüntü. Bozuk görüntü algılama çözülemedi.
 - **Bantın sistem düzeyindeki etkisi ölçülemedi:** video setinde yalnızca 42 uzak araç var.
 - **5 fps veri:** gerçek kamera 30 fps. Takip ve histerezis davranışı gerçek hızda tekrar ölçülmeli.
+## Faz 5 · TensorRT, gecikme ölçümü
+
+**Yapılanlar:** Windows'ta TensorRT 10.16 kurulumu, tam kare ve bant için iki sabit boyutlu FP16 motor, `trtexec` ile motor gecikmesi (Deney 9), değerlendirme scriptlerine motor desteği, kendi motor derleyicimiz ve INT8 kalibrasyonu, uçtan uca gecikme scripti.
+
+### Kurulum (Windows, RTX 5050)
+
+| Sorun | Çözüm |
+|---|---|
+| Blackwell (sm_120) eski TensorRT sürümleriyle çalışmıyor. | TensorRT 10.16.1 (CUDA 12.0–12.9 zip'i), CUDA Toolkit 12.8, Python'da `tensorrt-cu12` aynı sürüm. Zip ile Python sürümü farklı olursa birinin derlediği motoru diğeri açamaz. |
+| `trtexec` bulunamadı. Kullanıcı PATH'inde klasör yerine `trtexec.exe` dosyasının kendisi, sistem PATH'inde eski sürümün olmayan klasörü yazılıydı. Yeni zip'lerde DLL'ler `lib` değil `bin` altında. | Doğru `bin` klasörü PowerShell profiline (`$PROFILE.CurrentUserAllHosts`) eklendi. `.venv\Scripts\Activate.ps1`'e eklemek denendi: dosyanın sonunda dijital imza bloğu var, imzadan sonra gelen satır betiği bozuyor; geri alındı. |
+
+### Motorlar
+
+| Sorun | Çözüm |
+|---|---|
+| Ultralytics'in ürettiği `.engine` dosyasını `trtexec --loadEngine` açamıyor. | Ultralytics dosyanın başına meta veri (4 bayt uzunluk + JSON) yazıyor. Gecikme ölçümü için motor `trtexec` ile ONNX'ten ayrıca derlendi. Kendi derleyicimiz `--raw` ile meta verisiz kopya da üretiyor. |
+| Kare giriş (1280×1280) 720p'de piksellerin %42'sini dolguya harcıyor. | Tam kare motoru 736×1280. |
+| Değerlendirme scriptleri tam kare ve bant için aynı modeli kullanıyordu. Sabit boyutlu motor bantta çalışamaz. | `--band-weights` eklendi (`adb/models.py`). Motor boyutu meta veriden okunuyor; uymayan girdi hata veriyor. |
+| Ultralytics INT8 kalibrasyonu kare letterbox kullanıyor; dikdörtgen motorla ve bant parçalarıyla uyuşmuyor. | Kendi derleyicimiz (`deploy/build_engine.py`): kalibrasyon girdisi Ultralytics ön işlemesinin aynısı, bant motoru bant parçalarıyla kalibre ediliyor. |
+| Ultralytics `val` dikdörtgen girişi tek sayıya indiriyor. | mAP için ayrı kare doğrulama motoru (`export.py --val`). |
+
+### Gecikme
+
+| Sorun | Çözüm |
+|---|---|
+| Faz 3–4'te gecikme ölçümleri aynı koşulda 16–44 ms arasında oynuyordu. Tam kare motorunda da değişim katsayısı %32 çıktı. | `trtexec` darboğazı gösterdi: GPU değil, CPU'nun çekirdekleri sıraya koyma süresi. CUDA Graph ile p99 8,8 → 2,8 ms, değişim %4. **Çözüldü:** C++ hattında CUDA Graph (ADR-019). |
+| FP16 motorlar hızlı (algılama ~11 ms), ama Python hattının toplamı bant her karede p95 81 ms çıktı (Deney 11). | Aşama aşama ölçüm: bant aşaması 36,7 ms, motoru 7,8 ms. Fark CPU'daki parça hazırlama ve Ultralytics ön/son işlemesi. **Açık:** C++ hattında GPU'da ön işleme ile çözülecek. Şimdilik Python'da bant iki karede bir (p95 39 ms). |
+
+### Doğruluk eşitliği
+
+| Sorun | Çözüm |
+|---|---|
+| FP16'nın uzak ışıkları kaybettirip kaybettirmediği bilinmiyordu. | Aynı görüntülerde PyTorch ve FP16 (Deney 10): 220 m bandında fark 665 araçta en fazla 2 tespit, video sistem metrikleri birebir aynı. FP16 seçildi, INT8 ertelendi (ADR-020). |
+| Ultralytics `val` dikdörtgen motoru desteklemediği için mAP kare doğrulama motoruyla ölçüldü; dolgu PyTorch'tan farklı. | mAP farkı (≤ 0,6 puan) bu yüzden yalnızca hassasiyete bağlanmadı; asıl karşılaştırma aynı dikdörtgen girişle yapılan recall ölçümü. |
+
+### GPU hattı (ADR-021)
+
+| Sorun | Çözüm |
+|---|---|
+| C++ hattı ~1–1,5 hafta ve Windows derleme ortamı gerektiriyordu; asıl ihtiyaç iki sayıydı (REQ-P-05/06). | C++'ın kazandıracağı işler Python'da yapıldı: kare GPU'ya 8 bit bir kez, dolgu ve bant parçaları GPU'da, motorlar TensorRT Python API'si ve CUDA Graph ile, NMS GPU'da (`adb/trt_runtime.py`). Bant her karede p95 81 → 20 ms. C++ gelecek çalışma. |
+| GPU hattı tam karede +%13 yanlış alarm verdi; aynı motor, aynı görüntüler. | `eval/compare_backends.py` farkı adım adım ayırdı: ön işleme, CUDA Graph, son işleme aynıydı. Fark Ultralytics `predict`'in NMS IoU eşiğindeydi (0,5, varsayılan sanılan 0,7 değil). Eşitlenince tam kare çıktısı birebir aynı. Ders: "varsayılan" bir değeri kaynağından okumadan kopyalamamak. |
+
+## Faz 6 · Doğrulama, FMEA, demo
+
+**Yapılanlar:** gereksinim doğrulama matrisi (`eval/verify_requirements.py` → docs/verification.md), FMEA (docs/fmea.md), hat düzeyinde gereksinim ve hata enjeksiyonu testleri (`tests/test_requirements.py`), demo videosu üreticisi (`scripts/render_demo.py`).
+
+| Sorun | Çözüm |
+|---|---|
+| Faz 4'ün sistem metrikleri (titreme 1,2/dk, kullanım 0,65) "takip · tam kare" modunda ölçülmüştü. Dağıtılan yapılandırma artık takip + tam kare + bant her karede. | Son ölçümler dağıtılan modda tekrarlanıyor (`takip·tam+bant`, GPU hattı). |
+| `eval_video.py`'nin far kararı eşiği varsayılanı 0,25'te kalmıştı, sistem 0,35 kullanıyor (ADR-017). | Varsayılan artık `system.yaml`'dan okunuyor. |
+| Doğrulama sırasında iki gereksinimin kodda karşılığı olmadığı görüldü: REQ-F-08 (50 ms öngörü) yapılandırmada var ama kullanılmıyor; REQ-S-03 (eşik altı tespit bölgesini kısma) ADR-017'deki eşik kararıyla çelişiyor. | Matriste "uygulanmadı" ve "kaldı" olarak, sebepleriyle yazıldı; riskleri FMEA'da (FM-05, FM-04) hesaplandı. Sapmayı belgeleyen test eklendi. |
+| REQ-P-03 (kısma tepki süresi) video verisiyle ölçülemiyor: videoda tek etiketli kare var. | Tepki analitik olarak ayrıştırıldı: takip onayı (1 kare) + hat gecikmesi p95. Onay davranışı testle doğrulandı. |
+| Takip parametreleri kare cinsinden ve 5 fps veriyle ayarlı; 30 fps'te iz 0,1 s'de düşer. | FMEA'ya yazıldı (FM-08). Far kararındaki 1 sn histerezis etkisini kapatıyor (testli). |
+| Dağıtılan modda kamaşma hedefi karşılandı (%0,8) ama titreme 1,25'ten 5,0 / dk'ya çıktı. | Ödünleşim olarak raporlandı, bant her karede kaldı (ADR-022, Deney 13). Titreme örneği çok küçük (1 olay = 1,25 / dk). **Açık.** |
+| Doğrulama scripti REQ-S-04'ü "kaldı" saydı: README yeniden yazılınca başlık "## 8. Bilinen sınırlamalar" olmuş, kontrol düz metin arıyordu. | Kontrol numaralı başlıkları da tanıyor. |
+| Demo GIF'inde renkler soluk/yeşilimsi çıktı. | Palet tek bir kareden alınıyordu; o karede olmayan renkler (açık segment sarısı) bozuluyordu. Palet artık 8 kare + bindirme renklerinden. |
+| Demo videosunda (yoğun trafikli şehir otoyolu) far maskesi çoğu karede tamamen kısık. | Sahne için doğru davranış. Seçici karartmayı göstermek için aydınlatmasız kırsal yol videosu eklendi; README'nin başındaki GIF oradan (araç geçişi, 90–101 sn). Kısma olayları far şeridinin renginden kare kare ayıklandı. |
