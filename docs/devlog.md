@@ -133,3 +133,29 @@ Hedef: gece 220 m'de recall 0,75 → 0,90. Dört yöntem denendi.
 - **Kamaşma ihlali, lambası yanan araçlarda %1,3, hedef ≤ %1.** Sebebi büyük ölçüde bozuk görüntü. Bozuk görüntü algılama çözülemedi.
 - **Bantın sistem düzeyindeki etkisi ölçülemedi:** video setinde yalnızca 42 uzak araç var.
 - **5 fps veri:** gerçek kamera 30 fps. Takip ve histerezis davranışı gerçek hızda tekrar ölçülmeli.
+## Faz 5 · TensorRT, gecikme ölçümü
+
+**Yapılanlar:** Windows'ta TensorRT 10.16 kurulumu, tam kare ve bant için iki sabit boyutlu FP16 motor, `trtexec` ile motor gecikmesi (Deney 9), değerlendirme scriptlerine motor desteği, kendi motor derleyicimiz ve INT8 kalibrasyonu, uçtan uca gecikme scripti.
+
+### Kurulum (Windows, RTX 5050)
+
+| Sorun | Çözüm |
+|---|---|
+| Blackwell (sm_120) eski TensorRT sürümleriyle çalışmıyor. | TensorRT 10.16.1 (CUDA 12.0–12.9 zip'i), CUDA Toolkit 12.8, Python'da `tensorrt-cu12` aynı sürüm. Zip ile Python sürümü farklı olursa birinin derlediği motoru diğeri açamaz. |
+| `trtexec` bulunamadı. Kullanıcı PATH'inde klasör yerine `trtexec.exe` dosyasının kendisi, sistem PATH'inde eski sürümün olmayan klasörü yazılıydı. Yeni zip'lerde DLL'ler `lib` değil `bin` altında. | Doğru `bin` klasörü PowerShell profiline (`$PROFILE.CurrentUserAllHosts`) eklendi. `.venv\Scripts\Activate.ps1`'e eklemek denendi: dosyanın sonunda dijital imza bloğu var, imzadan sonra gelen satır betiği bozuyor; geri alındı. |
+
+### Motorlar
+
+| Sorun | Çözüm |
+|---|---|
+| Ultralytics'in ürettiği `.engine` dosyasını `trtexec --loadEngine` açamıyor. | Ultralytics dosyanın başına meta veri (4 bayt uzunluk + JSON) yazıyor. Gecikme ölçümü için motor `trtexec` ile ONNX'ten ayrıca derlendi. Kendi derleyicimiz `--raw` ile meta verisiz kopya da üretiyor. |
+| Kare giriş (1280×1280) 720p'de piksellerin %42'sini dolguya harcıyor. | Tam kare motoru 736×1280. |
+| Değerlendirme scriptleri tam kare ve bant için aynı modeli kullanıyordu. Sabit boyutlu motor bantta çalışamaz. | `--band-weights` eklendi (`adb/models.py`). Motor boyutu meta veriden okunuyor; uymayan girdi hata veriyor. |
+| Ultralytics INT8 kalibrasyonu kare letterbox kullanıyor; dikdörtgen motorla ve bant parçalarıyla uyuşmuyor. | Kendi derleyicimiz (`deploy/build_engine.py`): kalibrasyon girdisi Ultralytics ön işlemesinin aynısı, bant motoru bant parçalarıyla kalibre ediliyor. |
+| Ultralytics `val` dikdörtgen girişi tek sayıya indiriyor. | mAP için ayrı kare doğrulama motoru (`export.py --val`). |
+
+### Gecikme
+
+| Sorun | Çözüm |
+|---|---|
+| Faz 3–4'te gecikme ölçümleri aynı koşulda 16–44 ms arasında oynuyordu. Tam kare motorunda da değişim katsayısı %32 çıktı. | `trtexec` darboğazı gösterdi: GPU değil, CPU'nun çekirdekleri sıraya koyma süresi. CUDA Graph ile p99 8,8 → 2,8 ms, değişim %4. **Çözüldü:** C++ hattında CUDA Graph (ADR-019). |

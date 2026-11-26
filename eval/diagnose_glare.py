@@ -130,7 +130,8 @@ def draw(img, gt, vi, dec, thr, mask, cam, edges, title):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--weights", required=True)
+    ap.add_argument("--weights", required=True, help=".pt veya tam kare .engine")
+    ap.add_argument("--band-weights", help="bant motoru (.engine); yalnızca bantlı modlarda ve motorla gerekir")
     ap.add_argument("--videos", type=Path, default=ROOT / "data/bdd_video/videos.json")
     ap.add_argument("--data", type=Path, default=ROOT / "data/bdd_adb")
     ap.add_argument("--conds", nargs="+", default=["night", "night_adverse"])
@@ -144,7 +145,7 @@ def main():
     a = ap.parse_args()
 
     import cv2
-    from ultralytics import YOLO
+    from adb.models import load_detectors, run_dir_for
     from adb.slicing import load_slicing, merge, predict_band, predict_full
 
     sysc = load_config()
@@ -155,8 +156,8 @@ def main():
         vids = {k: v for k, v in vids.items() if sc.get(k) in a.scenes}
     use_band, tracked = "bant" in a.mode, a.mode.startswith("takip")
     cfg = load_slicing(ROOT / "configs/slicing.yaml") if use_band else None
-    model = YOLO(a.weights)
-    out_dir = Path(a.weights).resolve().parents[1] / "glare_diag"
+    model, band_model = load_detectors(a.weights, a.band_weights, a.imgsz, need_band=use_band)
+    out_dir = run_dir_for(a.weights) / "glare_diag"
     out_dir.mkdir(exist_ok=True)
     for f in out_dir.glob("*.jpg"):
         f.unlink()
@@ -177,7 +178,7 @@ def main():
             img = cv2.imread(str(f))
             raw = predict_full(model, img, 0.10, a.imgsz)
             if use_band:
-                raw = merge(raw, predict_band(model, img, cfg, 0.10))
+                raw = merge(raw, predict_band(band_model, img, cfg, 0.10))
             dec = tr.update(*raw)[:3] if tracked else raw
             mask = bc.step(*dec, i / a.fps)
         lbl = a.data / "labels" / v.get("split", "test") / f"{name}.txt"

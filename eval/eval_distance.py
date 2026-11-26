@@ -12,7 +12,10 @@ Mesafe ≈ fx * 1,8 m / kutu genişliği (configs/system.yaml kamerası; BDD kam
 Kullanım:
   python eval/eval_distance.py --weights runs/baseline/weights/best.pt
   python eval/eval_distance.py --weights ... --conds night --conf 0.1 0.25
-Çıktı: ekrana tablo + runs/<ad>/eval_distance[_<imgsz>].json + .png (imgsz 1280 değilse dosya adına eklenir)
+  # TensorRT (Faz 5): tam kare ve bant ayrı motorlar
+  python eval/eval_distance.py --weights deploy/models/full_fp16.engine --band-weights deploy/models/band_fp16.engine --conds night --slice
+Çıktı: ekrana tablo + runs/<ad>/eval_distance[_<imgsz>].json + .png (imgsz 1280 değilse dosya adına eklenir).
+Motorlarda: runs/trt/<motor adı>/.
 """
 
 import argparse
@@ -128,7 +131,7 @@ def new_stats(confs):
                 "fp": np.zeros(1, int), "img": np.zeros(1, int)} for c in confs}
 
 
-def run_sliced(model, paths, data, a, min_conf, cond):
+def run_sliced(model, band_model, paths, data, a, min_conf, cond):
     """Her görüntüde: tam kare bir kez, bant parçaları ek olarak. İki mod aynı görüntülerde ölçülür."""
     import cv2
     from adb.slicing import load_slicing, merge, predict_band, predict_full
@@ -146,7 +149,7 @@ def run_sliced(model, paths, data, a, min_conf, cond):
         s0 = time.perf_counter()
         full = predict_full(model, img, min_conf, a.imgsz)
         s1 = time.perf_counter()
-        band = predict_band(model, img, cfg, min_conf)
+        band = predict_band(band_model, img, cfg, min_conf)
         merged = merge(full, band)
         s2 = time.perf_counter()
         if i > 10:                                   # ilk kareler ısınma, süreye katılmaz
@@ -168,7 +171,8 @@ def run_sliced(model, paths, data, a, min_conf, cond):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--weights", required=True)
+    ap.add_argument("--weights", required=True, help=".pt veya tam kare .engine")
+    ap.add_argument("--band-weights", help="bant motoru (.engine); .pt için gerekmez")
     ap.add_argument("--data", default=str(ROOT / "data/bdd_adb"))
     ap.add_argument("--conds", nargs="+", default=["day", "night", "night_adverse"])
     ap.add_argument("--conf", type=float, nargs="+", default=[0.1, 0.25],
@@ -182,11 +186,12 @@ def main():
                          "(configs/slicing.yaml gerekir: scripts/horizon_band.py)")
     a = ap.parse_args()
 
-    from ultralytics import YOLO
-    model = YOLO(a.weights)
+    from adb.models import load_detectors, run_dir_for
+    model, band_model = load_detectors(a.weights, a.band_weights, a.imgsz, need_band=a.slice)
+    print(f"Tam kare: {model.describe()}" + (f" | bant: {band_model.describe()}" if a.slice else ""))
     fx = Camera.from_config(load_config()).fx_px
     data = Path(a.data)
-    run_dir = Path(a.weights).resolve().parents[1]
+    run_dir = run_dir_for(a.weights)
     tag = "" if a.imgsz == 1280 else f"_{a.imgsz}"          # önceki sonuçların üzerine yazmasın
     min_conf = min(a.conf)
 
@@ -206,12 +211,12 @@ def main():
         src = run_dir / f"eval_distance_{cond}.txt"
         src.write_text("\n".join(paths), encoding="utf-8")
         if a.slice:
-            stats.update(run_sliced(model, paths, data, a, min_conf, cond))
+            stats.update(run_sliced(model, band_model, paths, data, a, min_conf, cond))
             continue
         st = new_stats(a.conf)
         t0 = time.time()
-        for i, r in enumerate(model.predict(str(src), imgsz=a.imgsz, conf=min_conf, half=True, batch=a.batch,
-                                            stream=True, verbose=False), 1):
+        for i, r in enumerate(model.model.predict(str(src), imgsz=model.imgsz, conf=min_conf, half=True,
+                                                  batch=model.batch or a.batch, stream=True, verbose=False), 1):
             lbl = data / "labels" / "test" / f"{Path(r.path).stem}.txt"
             accumulate(st, read_gt(lbl), r.boxes.xyxy.cpu().numpy(), r.boxes.cls.cpu().numpy().astype(int),
                        r.boxes.conf.cpu().numpy(), a.conf, a.iou, gt_all=read_gt(lbl, range(6)))

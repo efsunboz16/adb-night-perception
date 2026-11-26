@@ -111,3 +111,12 @@ Her önemli teknik karar burada kısa olarak kayıt altına alınır: bağlam, k
 - **Bağlam:** Deney 8'de dört basit görüntü kalitesi ölçüsü iki bozuk videoyu (ıslak cam, sarsıntı) tutarlı şekilde ayırmadı. Uzama ölçüsü her birini ayrı ayarda yakaladı, ikisini birden değil. Pozitif örnek sayısı 2.
 - **Karar:** `safety_monitor.blur_laplacian_min: null`. Kalibre edilmemiş bir eşikle uzun farı kapatmak, ya hiçbir şey yakalamaz ya da sağlam videolarda sebepsiz kısa fara düşer. Diğer iki kontrol (kare gecikmesi, aşırı parlaklık) kalıyor.
 - **Sonuç:** REQ-S-02'nin bulanıklık kısmı ve kamaşma hedefi (ışıklı araç ≤ %1, ölçülen %1,3) açık. İleride: etiketli bozuk görüntülerle eğitilmiş kalite sınıflandırıcı veya araç sinyalleri (yağmur sensörü, silecek).
+## ADR-019 · Gömülü çıkarım: iki sabit boyutlu TensorRT motoru, dikdörtgen giriş, CUDA Graph
+- **Bağlam:** Faz 5. Tam kare ve ufuk bandı farklı boyutlarda çalışıyor. Ultralytics kare giriş kullanıyor (1280×1280); 720p karede piksellerin %42'si dolgu. Deney 9'da tam kare motorunun gecikmesi CPU tarafındaki çekirdek başlatma süresi yüzünden dalgalı çıktı (değişim katsayısı %32).
+- **Karar:**
+  1. İki ayrı motor: tam kare **736×1280, batch 1**; bant **704×768, batch 4** (352×384'lük 4 parça, 2x). Boyutlar `system.yaml` ve `slicing.yaml`'dan hesaplanır (`adb/models.py`).
+  2. Motorlar ONNX'ten kendi derleyicimizle üretilir (`deploy/build_engine.py`), Ultralytics meta verisi dosya başına yazılır: değerlendirme scriptleri motorları `.pt` gibi açar.
+  3. INT8 kalibrasyonu train bölümünden gece kareleriyle yapılır; bant motoru bant parçalarıyla kalibre edilir (test verisi kullanılmaz).
+  4. C++ hattında çıkarım CUDA Graph ile başlatılır.
+  5. Sabit boyutlu motora uymayan girdi sessizce yeniden ölçeklenmez, hata verir (uzak ışıklar ölçeklemeyle kaybolur).
+- **Sonuç:** Tam kare p99 8,8 → 2,8 ms, algılama toplamı ~11 ms. Motor dosyaları GPU'ya bağlı: Jetson'da ONNX'ten yeniden derlenir. Ultralytics `val` dikdörtgen girişi desteklemediği için mAP ayrı bir kare (1280×1280) doğrulama motoruyla ölçülür. Hassasiyet seçimi (FP16 / INT8) doğruluk eşitliği ölçülünce ADR-020'de.

@@ -56,20 +56,48 @@ def _boxes(r):
     return b.xyxy.cpu().numpy(), b.cls.cpu().numpy().astype(int), b.conf.cpu().numpy()
 
 
+def _unwrap(model, imgsz=None):
+    """adb.models.Detector ise (model, sabit imgsz, sabit batch); değilse (model, imgsz, None)."""
+    from adb.models import Detector
+
+    if isinstance(model, Detector):
+        return model.model, (model.imgsz if model.imgsz is not None else imgsz), model.batch
+    return model, imgsz, None
+
+
 def predict_full(model, img, conf, imgsz=1280, half=True):
-    return _boxes(model.predict(img, imgsz=imgsz, conf=conf, half=half, verbose=False)[0])
+    """model: Ultralytics modeli veya adb.models.Detector (sabit boyutlu motorlarda imgsz oradan gelir)."""
+    m, imgsz, _ = _unwrap(model, imgsz)
+    return _boxes(m.predict(img, imgsz=imgsz, conf=conf, half=half, verbose=False)[0])
+
+
+def band_crops(img, cfg: dict):
+    """Bant parçaları (2x büyütülmüş) ve sol kenar x'leri."""
+    h, w = img.shape[:2]
+    y0, y1 = (int(round(v * h)) for v in cfg["band_frac"])
+    tile_w, scale = cfg["tile_w"], cfg["scale"]
+    xs = tile_xs(w, tile_w, cfg["overlap"])
+    crops = [cv2.resize(img[y0:y1, x:x + tile_w], None, fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
+             for x in xs]
+    return crops, xs, y0
 
 
 def predict_band(model, img, cfg: dict, conf, half=True):
-    """Sadece bant parçalarındaki tahminler (orijinal koordinatlarda)."""
-    h, w = img.shape[:2]
-    y0, y1 = (int(round(v * h)) for v in cfg["band_frac"])
-    tile_w, overlap, scale = cfg["tile_w"], cfg["overlap"], cfg["scale"]
-    xs = tile_xs(w, tile_w, overlap)
-    crops = [cv2.resize(img[y0:y1, x:x + tile_w], None, fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
-             for x in xs]
-    imgsz = int(math.ceil(max(crops[0].shape[:2]) / 32) * 32)
-    rs = model.predict(crops, imgsz=imgsz, conf=conf, half=half, batch=len(crops), verbose=False)
+    """Sadece bant parçalarındaki tahminler (orijinal koordinatlarda).
+    model: Ultralytics modeli veya adb.models.Detector. Sabit boyutlu motorda parça boyutu ve sayısı
+    motorunkiyle aynı olmalı; değilse hata verilir (sessizce yeniden ölçeklemek uzak ışıkları bozar)."""
+    w = img.shape[1]
+    tile_w, scale = cfg["tile_w"], cfg["scale"]
+    crops, xs, y0 = band_crops(img, cfg)
+    ch, cw = crops[0].shape[:2]
+    need = (int(math.ceil(ch / 32) * 32), int(math.ceil(cw / 32) * 32))   # 704×352 parça -> (704, 768)
+    m, imgsz, batch = _unwrap(model, need)
+    if isinstance(imgsz, (tuple, list)) and tuple(imgsz) != need:
+        raise ValueError(f"Bant motoru giriş boyutu {tuple(imgsz)}, parçalar {need} gerektiriyor. "
+                         f"Motoru deploy/export.py ile yeniden üret.")
+    if batch is not None and batch != len(crops):
+        raise ValueError(f"Bant motoru batch {batch}, parça sayısı {len(crops)}.")
+    rs = m.predict(crops, imgsz=imgsz, conf=conf, half=half, batch=len(crops), verbose=False)
     xyxy, cls, cf = [], [], []
     for r, x in zip(rs, xs):
         b, c, s = _boxes(r)

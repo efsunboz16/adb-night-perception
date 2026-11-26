@@ -308,3 +308,19 @@ Deney 7'de ışıklı araç ihlallerinin 4/5'i iki bozuk videodan geldi: b1e2346
 2. **Işık lekesi uzaması** iki bozulmayı da bir ölçüm ayarında yakalıyor, ama aynı ayarda ikisini birden değil. Islak camı 6 karenin ortancası, sarsıntıyı tek kare yakalıyor. İki bozulma da anlık ve kareden kareye değişiyor.
 3. **Yalnızca 2 bozuk örnek var.** Bu iki videoya göre seçilen bir eşik verinin rastlantısına uyar, genellenmez.
 4. **Karar:** Bulanıklık kontrolü kapalı (`blur_laplacian_min: null`). REQ-S-02'nin bulanıklık kısmı açık. Gerçek çözüm muhtemelen etiketli bozuk görüntülerle eğitilmiş bir görüntü kalitesi sınıflandırıcısı ya da yağmur sensörü / silecek durumu gibi araç sinyalleri. Kamaşma hedefi (ışıklı araçlarda ≤ %1) bu yüzden karşılanmıyor: %1,3.
+## Deney 9 · TensorRT FP16 motor gecikmesi (Faz 5, `trtexec`)
+
+RTX 5050 Laptop (8 GB, Blackwell sm_120), TensorRT 10.16.1, CUDA 12.8. Prizde, Windows güç modu "En iyi performans". `trtexec --fp16 --warmUp=2000 --iterations=1000 --useSpinWait`, batch sabit. Ölçülen yalnızca motor: ön/son işleme, NMS, takip hariç.
+
+| Motor | Giriş | GPU hesaplama p50 | p95 | p99 | Veri aktarımı dahil p50 | p95 | p99 | Değişim katsayısı |
+|---|---|---|---|---|---|---|---|---|
+| Tam kare | 736×1280, batch 1 | 2,90 | 4,22 | 8,76 | 4,08 | 5,38 | 9,78 | %31,9 |
+| **Tam kare + CUDA Graph** | 736×1280, batch 1 | **2,31** | **2,33** | **2,78** | **3,23** | **3,36** | **3,86** | **%4,3** |
+| Bant | 4 × 704×768 | 5,56 | 5,84 | 5,95 | 7,76 | 8,53 | 9,29 | düşük |
+
+**Gözlemler:**
+1. **Algılama, tam kare + bant birlikte ~11 ms (p95 ~12 ms).** Deney 2'de aynı iş PyTorch ile 48,5 ms sürmüştü (okuma ve ön/son işleme dahil, bu yüzden doğrudan karşılaştırılamaz). 30 fps kare aralığı 33 ms, gecikme bütçesi 50 ms.
+2. **Tam kare dalgalanmasının kaynağı CPU.** CUDA Graph olmadan `trtexec` sıraya koyma (enqueue) süresinin GPU süresini aştığını bildirdi: küçük model çok sayıda kısa çekirdek çalıştırıyor, dizüstünün CPU güç yönetimi bu süreyi oynatıyor. CUDA Graph ile sıraya koyma ~3 ms'den ~0,01 ms'ye indi, p99 üçte bire düştü. Faz 3–4'teki 16–44 ms kararsızlığının da büyük ihtimalle kaynağı bu.
+3. **Bant tam karenin 1,9 katı** (CUDA Graph'sız ölçümle). Faz 3 tahminiyle (~1,7–2 kat) uyumlu. Bant batch 4 ile uzun ve az çekirdek çalıştırdığı için zaten kararlı.
+4. **Bantta veri aktarımı 2 ms:** giriş FP32, 4 parça 26 MB. C++ hattında görüntüyü 8 bit gönderip ölçekleme/normalizasyonu GPU'da yapmak aktarımı dörtte birine indirir.
+5. **Henüz ölçülmedi:** FP16'nın doğruluğa etkisi (mAP, uzak recall, kamaşma) ve Python hattının uçtan uca gecikmesi (`eval/bench_latency.py`). Bant zamanlaması kararı (ADR-016) bunlardan sonra verilecek.

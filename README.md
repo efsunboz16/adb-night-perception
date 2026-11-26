@@ -2,7 +2,7 @@
 
 **Gece sürüşü için kamera tabanlı adaptif uzun far (ADB) algılama sistemi.** Tek ön kameradan araçları, farları ve arka lambaları algılar. Uzun farı açık tutarken yalnızca diğer yol kullanıcılarının bulunduğu açı dilimlerini karartacak 16 segmentlik bir far maskesi üretir. Hedef platform: gömülü cihaz (NVIDIA Jetson) üzerinde gerçek zamanlı çalışma.
 
-> **Durum:** Faz 4 / 6 tamamlandı, sırada Faz 5 (gerçek zamanlılık) var. Araç sınıfında gece mAP50 **0,79**. Gece 220 m bandında araç veya ışığı tam kare çıkarımla **%75**, ufuk bandı dilimlemesiyle **%85** yakalanıyor (hedef %90). Otoyol gece videolarında far titremesi dakikada **1,2** (hedef ≤ 2). Lambası yanan araçlarda kamaşma ihlali **%1,3** (hedef ≤ %1): ihlallerin hiçbiri far geometrisinden değil, 4/5'i bozuk görüntülerden (ıslak cam, kamera sarsıntısı). Ayrıntılar: [docs/results.md](docs/results.md) · Süreç, sorunlar ve çözümler: [docs/devlog.md](docs/devlog.md)
+> **Durum:** Faz 4 / 6 tamamlandı, Faz 5 (gerçek zamanlılık) sürüyor: TensorRT FP16 ile tam kare + ufuk bandı algılaması RTX 5050'de **~11 ms** (Deney 9). Araç sınıfında gece mAP50 **0,79**. Gece 220 m bandında araç veya ışığı tam kare çıkarımla **%75**, ufuk bandı dilimlemesiyle **%85** yakalanıyor (hedef %90). Otoyol gece videolarında far titremesi dakikada **1,2** (hedef ≤ 2). Lambası yanan araçlarda kamaşma ihlali **%1,3** (hedef ≤ %1): ihlallerin hiçbiri far geometrisinden değil, 4/5'i bozuk görüntülerden (ıslak cam, kamera sarsıntısı). Ayrıntılar: [docs/results.md](docs/results.md) · Süreç, sorunlar ve çözümler: [docs/devlog.md](docs/devlog.md)
 
 ---
 
@@ -55,7 +55,7 @@ flowchart TD
 | Takip | ✅ kod + birim test | Uzak/küçük nesnelere uyarlanmış ByteTrack mantığı ([`adb/tracking.py`](adb/tracking.py)) |
 | Far kararı | ✅ kod + birim test | Paralaks düzeltmesi, güvenlik payı, histerezis ([`adb/decision.py`](adb/decision.py)) |
 | Güvenlik izleyici | ✅ kod + birim test | Kare gecikmesi ve aşırı parlaklıkta kısa fara dönüş. Bulanıklık kontrolü kapalı, güvenilir eşik bulunamadı ([`adb/safety.py`](adb/safety.py), ADR-018) |
-| Gömülü dağıtım | ⏳ Faz 5 | ONNX → TensorRT (FP16/INT8), C++ |
+| Gömülü dağıtım | 🔄 Faz 5 | TensorRT FP16 motorları ✅ (tam kare 736×1280 + bant 4×704×768, [ADR-019](docs/decisions.md)), doğruluk eşitliği ve INT8 ⏳, C++ ⏳ ([deploy/](deploy/README.md)) |
 
 ## Sonuçlar
 
@@ -119,6 +119,15 @@ Bulgular:
 - **Takip yanlış alarm süzgeci olarak işe yaramadı** (−%9). Yanlış alarmların %55–65'i kalıcı: sokak lambası, yansıma, etiketsiz uzak araç. Bu yüzden yanlış alarm görünüşe dayalı doğrulamayla çözülecek ([ADR-016](docs/decisions.md)).
 - **Far kararında takip ve histerezis birlikte** titremeyi hedefe indiriyor. Histerezis süresi taramayla 1,0 sn seçildi ([ADR-017](docs/decisions.md)).
 - **Ölçüm sahneye bağlı:** şehir içi gece karelerinde segmentlerin %82'si zaten kısık, metrikler modları ayırt etmiyor. Gerçek ADB şehir içinde devre dışıdır.
+
+**Faz 5: TensorRT (Deney 9).** RTX 5050, TensorRT 10.16 FP16, yalnızca motor (veri aktarımı dahil):
+
+| Motor | p50 | p95 | p99 |
+|---|---|---|---|
+| Tam kare 736×1280 (CUDA Graph) | 3,2 ms | 3,4 ms | 3,9 ms |
+| Ufuk bandı 4 × 704×768 | 7,8 ms | 8,5 ms | 9,3 ms |
+
+Kare yerine dikdörtgen giriş piksellerin %42'lik dolgusunu kaldırdı. CUDA Graph, Faz 3–4'teki gecikme dalgalanmasının kaynağını (CPU'nun çekirdek başlatma süresi) ortadan kaldırdı. FP16'nın doğruluğa etkisi ve uçtan uca gecikme ölçülüyor.
 
 Tam tablolar, ışık sınıfı sonuçları ve sınırlamalar: [docs/results.md](docs/results.md)
 
@@ -216,7 +225,7 @@ adb-night-perception/
 ├── train/          yerel eğitim
 ├── kaggle/         Kaggle notebook'u ve eğitim scripti
 ├── eval/           koşul ve mesafe bazlı değerlendirme, yanlış alarm, video üzerinde ADB sistem metrikleri
-├── deploy/         ONNX / TensorRT / C++ (Faz 5)
+├── deploy/         ONNX → TensorRT motorları, INT8 kalibrasyonu, C++ (Faz 5)
 ├── docs/           gereksinimler, mimari, kararlar (ADR), literatür, sonuçlar
 ├── tests/          birim testler
 └── data/           (repoda yok) veri setleri
@@ -228,7 +237,7 @@ adb-night-perception/
 |---|---|
 | [requirements.md](docs/requirements.md) | Kimlik numaralı gereksinimler (REQ-F/P/S), piksel bütçesi, çalışma alanı (ODD) |
 | [architecture.md](docs/architecture.md) | Modüller, arayüzler, karşılaştırılacak algılama mimarileri |
-| [decisions.md](docs/decisions.md) | 18 karar kaydı (ADR): bağlam, karar, sonuç |
+| [decisions.md](docs/decisions.md) | 19 karar kaydı (ADR): bağlam, karar, sonuç |
 | [literature.md](docs/literature.md) | SmartBeam, PVDN, 2PCNet, SAHI vb. ve projeye katkıları |
 | [results.md](docs/results.md) | Deney sonuçları ve gözlemler (Deney 1–8) |
 | [devlog.md](docs/devlog.md) | Geliştirme günlüğü: karşılaşılan sorunlar, çözümler, çözülemeyenler |
@@ -242,7 +251,7 @@ adb-night-perception/
 | 2 | Temel model, koşul ve mesafe bazlı değerlendirme | ✅ |
 | 3 | Uzak araç iyileştirmesi: dilimleme ✅, sözde etiketleme ❌, P2 kafası ❌, giriş büyütme ⚠️ | ✅ |
 | 4 | Takip ✅, far kararı ✅, video üzerinde sistem metrikleri ✅, kamaşma teşhisi ✅, güvenlik izleyici ✅ (bulanıklık hariç) | ✅ |
-| 5 | ONNX → TensorRT (FP16/INT8), C++ çıkarım, gecikme ölçümü | ⏳ |
+| 5 | TensorRT FP16 motorları ✅, motor gecikmesi ✅, doğruluk eşitliği ⏳, INT8 ⏳, uçtan uca gecikme ⏳, C++ çıkarım ⏳ | 🔄 |
 | 6 | Doğrulama, FMEA, demo videosu | ⏳ |
 
 ## Bilinen sınırlamalar
@@ -255,7 +264,7 @@ adb-night-perception/
 - **Bozuk görüntü algılanmıyor.** Islak/kirli ön cam ve kamera sarsıntısı basit görüntü ölçüleriyle yakalanamadı (Deney 8). Kamaşma ihlallerinin çoğu bu karelerden geliyor. Çözüm muhtemelen etiketli bozuk görüntülerle eğitilmiş bir kalite sınıflandırıcısı ya da araç sinyalleri (yağmur sensörü, silecek).
 - **Video verisi 5 fps.** Gerçek kamera 30 fps. Kareler arası kayma 6 kat büyük, takip burada daha zor. Etiket her videoda tek karede.
 - **Uzak araç örneği küçük:** video setinde 125 m ötesinde 42 araç var. Bantın sistem düzeyindeki etkisi bu örnekle ayırt edilemedi.
-- **Gecikme ölçümleri kararsız.** Aynı koşulda dizüstü GPU'da tam kare 16–44 ms arası ölçüldü. Güvenilir ölçüm Faz 5'te TensorRT ile yapılacak.
+- **Gecikme ölçümleri Python hattında hâlâ dalgalı olabilir.** Kaynağı bulundu: CPU'nun çekirdek başlatma süresi, dizüstü güç yönetimiyle oynuyor. TensorRT + CUDA Graph ile motorun p99 değeri 8,8 → 2,8 ms (Deney 9). C++ hattı CUDA Graph kullanacak.
 - **Reflektörler** (yansıyan tabelalar) otomatik etiketlenemiyor, model onları arka plan olarak öğreniyor.
 
 ## Lisans

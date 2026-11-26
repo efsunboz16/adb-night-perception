@@ -20,6 +20,7 @@ Modlar (aynı tespitlerden, model her kare için bir kez çalışır):
 
 Kullanım:
   python eval/eval_video.py --weights runs/baseline/weights/best.pt
+  python eval/eval_video.py --weights deploy/models/full_fp16.engine --band-weights deploy/models/band_fp16.engine
 """
 
 import argparse
@@ -89,7 +90,8 @@ def persistent(box, c, prev_dets, min_size=16.0, thr=0.2):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--weights", required=True)
+    ap.add_argument("--weights", required=True, help=".pt veya tam kare .engine")
+    ap.add_argument("--band-weights", help="bant motoru (.engine); .pt için gerekmez")
     ap.add_argument("--videos", type=Path, default=ROOT / "data/bdd_video/videos.json")
     ap.add_argument("--data", type=Path, default=ROOT / "data/bdd_adb")
     ap.add_argument("--conds", nargs="+", default=["night", "night_adverse"])
@@ -108,7 +110,7 @@ def main():
     a = ap.parse_args()
 
     import cv2
-    from ultralytics import YOLO
+    from adb.models import load_detectors, run_dir_for
     from adb.slicing import load_slicing, merge, predict_band, predict_full
 
     vids = {k: v for k, v in json.loads(a.videos.read_text(encoding="utf-8")).items() if v["cond"] in a.conds}
@@ -124,7 +126,8 @@ def main():
         sys.exit(f"{a.videos} içinde {a.conds} videosu yok.")
     cfg = load_slicing(ROOT / "configs/slicing.yaml")
     sysc = load_config()
-    model = YOLO(a.weights)
+    model, band_model = load_detectors(a.weights, a.band_weights, a.imgsz)
+    print(f"Tam kare: {model.describe()} | bant: {band_model.describe()}")
     min_conf = min(a.conf)
     print(f"{len(vids)} video ({', '.join(a.conds)}), video başına {a.warmup + 1} kare")
 
@@ -159,7 +162,7 @@ def main():
             s0 = time.perf_counter()
             full = predict_full(model, img, min_conf, a.imgsz)
             s1 = time.perf_counter()
-            band = predict_band(model, img, cfg, min_conf)
+            band = predict_band(band_model, img, cfg, min_conf)
             s2 = time.perf_counter()
             dets.append((full, merge(full, band)))
             if vi > 1:
@@ -319,7 +322,7 @@ def main():
     print(f"\nSüre: tam {tf:.1f} ms, bant {tb:.1f} ms, takip {tt:.2f} ms (RTX dizüstü, okuma hariç).")
     print("Not: 5 fps; gerçek kamera 30 fps. Kamaşma ihlali histerezisli maske ile, etiketli karede ölçülür.")
 
-    run_dir = Path(a.weights).resolve().parents[1]
+    run_dir = run_dir_for(a.weights)
     (run_dir / "eval_video.json").write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"Sonuçlar: {run_dir / 'eval_video.json'}")
 
