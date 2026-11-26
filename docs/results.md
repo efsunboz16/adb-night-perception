@@ -399,3 +399,32 @@ Bant iki karede bir: toplam p50 10,3, p95 19,6 ms.
 3. **Tam kare çıktısı Ultralytics ile birebir aynı.** İlk ölçümde GPU hattı tam karede +%13 yanlış alarm verdi. `eval/compare_backends.py` adım adım ayırdı: ön işleme aynı (fark 2·10⁻⁵ gri seviye), CUDA Graph ham çıktısı aynı (fark 0), son işleme aynı çıktıdan aynı kutular. Fark Ultralytics `predict`'in NMS IoU eşiğindeydi: 0,5 (varsaydığımız 0,7 değil). Düzeltmeden sonra tüm hücreler aynı.
 4. **Bantta kalan küçük fark** (yanlış alarm +%0,7, recall +0,001): parça büyütmede cv2'nin sabit noktalı yuvarlamasıyla en fazla 1 gri seviyelik fark (birim testte ölçüldü).
 5. **Gecikme ölçümü NMS IoU 0,7 ile yapıldı.** Eşik değişikliği yalnızca NMS'e giren kutu sayısını etkiliyor (~50/kare), süreye etkisi ihmal edilebilir.
+
+## Deney 13 · Dağıtılan yapılandırmada sistem metrikleri (Faz 6)
+
+Yapılandırma: TensorRT FP16, GPU hattı, takip, **tam kare + bant her karede** (ADR-016, ADR-021), far kararı güven ≥ 0,35, histerezis 1,0 sn. Faz 4'ün sistem metrikleri bantsız ("takip · tam kare") ölçülmüştü; burada dağıtılan mod ölçülüyor. Gereksinim matrisi: [verification.md](verification.md).
+
+**Kamaşma ihlali** (68 gece videosu, `diagnose_glare.py`):
+
+| | Faz 4 (takip · tam kare, Deney 7) | **Faz 6 (takip · tam kare + bant)** |
+|---|---|---|
+| Lambası yanan araç | 5 / 374 (%1,3) | **3 / 374 (%0,8)** ✅ hedef ≤ %1 |
+| Sebep: görülmedi | 2 | **0** |
+| Sebep: düşük güven | 2 | 2 |
+| Sebep: takip onayı | 1 | 1 |
+| Işıksız, park etmiş araç | 6 / 176 (%3,4) | 6 / 176 (%3,4) |
+
+**Uzun far kullanımı ve titreme** (20 otoyol + yerleşim gece videosu, `eval_video.py`):
+
+| Mod | Uzun far kullanımı | Titreme / dk (histerezisli) |
+|---|---|---|
+| takip · tam kare | %65 | 1,25 |
+| **takip · tam kare + bant her karede** | **%63** | **5,0** |
+| takip · bant iki karede bir | %65 | 1,25–2,5 |
+
+**Gözlemler:**
+1. **Kamaşma hedefi bant her karedeyken karşılanıyor.** Faz 4'te "görülmedi" olarak kalan iki ışıklı araç (ıslak cam ve sarsıntılı videolarda) bantla bulundu. Fark 2 araç: yön tutarlı, ama örnek küçük. 3/374 için %95 güven aralığı (Wilson) %0,3–2,3; yani hedefin altında olduğu istatistiksel olarak kanıtlanmış değil, ölçülen değer hedefin altında.
+2. **Bedeli titreme.** Bant, uzakta kısa süre görünüp kaybolan tespitler ekliyor; histerezisli titreme 1,25 → 5,0 / dk. Bu ölçüm çok küçük bir örneğe dayanıyor: değerlendirilen video süresi toplam ~0,8 dakika, **bir olay 1,25 / dk** demek. Yani fark 1 olaya karşı 4 olay.
+3. **Karar: bant her karede kalıyor** (ADR-022). Gereksinimlerdeki asimetri (requirements.md §6): kamaştırma, gereksiz açılıp kısılmadan daha ağır bir hata. Titreme, 30 fps gerçek kayıtla ve bant tespitleri için ayrı bir onay kuralıyla yeniden ele alınmalı.
+4. **Uzun far kullanımı %63** (hedef %80): yanlış alarmların %55–65'i kalıcı ışık kaynakları (Deney 6); görünüşe dayalı doğrulama olmadan bu hedefe ulaşılamıyor.
+5. **Demo videosu** (Pexels 15119004, sokak lambalı çok şeritli şehir otoyolu, yoğun trafik): karşı şerit ve öndeki araçlar tüm far kapsamını doldurduğu için maske çoğu karede tamamen kısık. Bu, sahne için doğru davranış; ADB'nin seçici karartması seyrek trafikli, aydınlatmasız yolda görünür. Video eğitim verisinden farklı bir kameradan (1080p, görüş açısı bilinmiyor), ölçüm için kullanılmadı.

@@ -1,0 +1,146 @@
+[
+ {
+  "id": "REQ-F-01",
+  "text": "Karşıdan gelen araç ≥ 220 m",
+  "target": "recall ≥ 0,90 (166–249 m)",
+  "measured": "0,851 (n=665; tam kare 0,752)",
+  "status": "KALDI",
+  "evidence": "`eval_distance.json` · gece test, güven ≥ 0,10, araç kutusu veya ışığı, bantlı (Deney 2, 12)"
+ },
+ {
+  "id": "REQ-F-02",
+  "text": "Öndeki araç (arka lamba) ≥ 100 m",
+  "target": "recall ≥ 0,90 (83–125 m)",
+  "measured": "0,921 (n=5007)",
+  "status": "KISMEN",
+  "evidence": "Aynı ölçüm. Yön ayrımı yok: öndeki ve karşıdan gelen araçlar birlikte sayılıyor"
+ },
+ {
+  "id": "REQ-F-03",
+  "text": "Sokak lambası / reflektörü araç sanma",
+  "target": "negatif sınıflarda yanlış pozitif oranı",
+  "measured": "yanlış alarm 4,29 / kare (tüm kaynaklar)",
+  "status": "ÖLÇÜLMEDİ",
+  "evidence": "Sokak lambası ve reflektör etiketi yok (ADR-009). Yanlış alarmların %55–65'i kalıcı (Deney 6)"
+ },
+ {
+  "id": "REQ-F-04",
+  "text": "Takip, ≤ 0,5 s kayıpta kimlik korunur",
+  "target": "ID switch, HOTA",
+  "measured": "iz 3 kare sürdürülüyor: 5 fps'te 0,6 s, 30 fps'te 0,1 s",
+  "status": "KISMEN",
+  "evidence": "MOT etiketi yok, HOTA ölçülemedi. Parametreler kare cinsinden, 5 fps'e göre ayarlı (FM-08). ✅ 2 test: `test_coasting_small_box_output_one_frame`, `test_every_other_frame_detection_confirmed_and_kept`"
+ },
+ {
+  "id": "REQ-F-05",
+  "text": "Paralaks düzeltmesi",
+  "target": "birim test",
+  "measured": "–",
+  "status": "GEÇTİ",
+  "evidence": "✅ 2 test: `test_parallax_vanishes_far_away`, `test_near_vehicle_parallax_widens_interval`"
+ },
+ {
+  "id": "REQ-F-06",
+  "text": "Her yana 1° güvenlik payı",
+  "target": "birim test",
+  "measured": "–",
+  "status": "GEÇTİ",
+  "evidence": "✅ 1 test: `test_glare_violation_and_utilization`"
+ },
+ {
+  "id": "REQ-F-07",
+  "text": "Histerezis: kaybolan hedefte segment bekleyip açılır",
+  "target": "0,5 s (ADR-017 ile 1,0 s)",
+  "measured": "1,0 s",
+  "status": "GEÇTİ",
+  "evidence": "✅ 2 test: `test_hysteresis_holds_then_releases`, `test_detection_dropout_keeps_segment_dimmed_for_release_time`. Süre titreme taramasıyla seçildi (Deney 6d)"
+ },
+ {
+  "id": "REQ-F-08",
+  "text": "Takip hızıyla 50 ms ileriyi öngör",
+  "target": "tepki gecikmesi telafisi",
+  "measured": "–",
+  "status": "UYGULANMADI",
+  "evidence": "`decision.predict_ahead_ms` yapılandırmada var, kodda kullanılmıyor. Etkisi ve risk: [fmea.md](fmea.md) FM-05"
+ },
+ {
+  "id": "REQ-P-01",
+  "text": "Kamaşma ihlali",
+  "target": "≤ %1",
+  "measured": "%0,8 (3/374 ışıklı araç)",
+  "status": "GEÇTİ",
+  "evidence": "`glare_diag/rates.json` · 68 gece videosu, mod takip·tam+bant; sebepler: düşük güven 2, takip onayı 1"
+ },
+ {
+  "id": "REQ-P-02",
+  "text": "Uzun far kullanımı",
+  "target": "≥ %80",
+  "measured": "%63",
+  "status": "KALDI",
+  "evidence": "`eval_video.json` · 20 otoyol + yerleşim gece videosu, takip·tam+bant"
+ },
+ {
+  "id": "REQ-P-03",
+  "text": "Kısma tepki süresi",
+  "target": "≤ 200 ms",
+  "measured": "54 ms = 1 kare onay (33 ms) + hat p95 20,4 ms",
+  "status": "GEÇTİ",
+  "evidence": "Tespit edildikten sonra; kaçırılan tespit (recall) ve LED sürücüsü hariç. ✅ 1 test: `test_req_p03_new_vehicle_dimmed_on_second_frame`"
+ },
+ {
+  "id": "REQ-P-04",
+  "text": "Titreme",
+  "target": "≤ 2 / dk",
+  "measured": "5,0 / dk",
+  "status": "KALDI",
+  "evidence": "Aynı ölçüm. 1 sn'den kısa açılma/kısılma (Deney 6). 5 fps veri"
+ },
+ {
+  "id": "REQ-P-05",
+  "text": "Gömülü cihazda işlem hızı",
+  "target": "≥ 25 FPS",
+  "measured": "60 FPS (NVIDIA GeForce RTX 5050 Laptop GPU)",
+  "status": "KISMEN",
+  "evidence": "`latency.json`. Jetson'da ölçülmedi (ADR-002); motorlar ONNX'ten yeniden derlenebilir"
+ },
+ {
+  "id": "REQ-P-06",
+  "text": "Uçtan uca gecikme",
+  "target": "≤ 50 ms (p95)",
+  "measured": "p95 20,4 ms (p50 16,2, p99 21,9)",
+  "status": "GEÇTİ",
+  "evidence": "`latency.json` · bant her karede, kare bellekte (kamera yakalama hariç) (Deney 12)"
+ },
+ {
+  "id": "REQ-S-01",
+  "text": "Kare 200 ms gelmezse kısa far",
+  "target": "birim test",
+  "measured": "eşik 200 ms, bekçi",
+  "status": "GEÇTİ",
+  "evidence": "✅ 3 test: `test_frame_gap_triggers_and_recovers_after_delay`, `test_watchdog_detects_missing_frames`, `test_req_s01_camera_freeze_dims_all_and_recovers`"
+ },
+ {
+  "id": "REQ-S-02",
+  "text": "Aşırı parlak veya bulanık görüntüde kısa far",
+  "target": "birim test + veri",
+  "measured": "parlaklık > 0,85: var · bulanıklık: kapalı",
+  "status": "KISMEN",
+  "evidence": "✅ 2 test: `test_overexposed_frame_disables_high_beam`, `test_req_s02_overexposure_dims_all`. Bulanıklık için güvenilir eşik bulunamadı (Deney 8, ADR-018, FM-01)"
+ },
+ {
+  "id": "REQ-S-03",
+  "text": "Belirsizlikte güvenli taraf: eşik altı tespit bölgesi kısılır",
+  "target": "tasarım",
+  "measured": "eşik altı (0,35) tespit yok sayılıyor",
+  "status": "KALDI",
+  "evidence": "Bilinçli sapma: düşük eşik yanlış kısmayı ve titremeyi artırdı (Deney 6d, ADR-017, FM-04). ✅ 1 test: `test_low_confidence_vehicle_ignored_by_design`"
+ },
+ {
+  "id": "REQ-S-04",
+  "text": "Bilinen sınırlamalar belgelenir",
+  "target": "README",
+  "measured": "–",
+  "status": "GEÇTİ",
+  "evidence": "README › Bilinen sınırlamalar, docs/fmea.md"
+ }
+]

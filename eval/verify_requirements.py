@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -96,8 +97,6 @@ def main():
         return ok, f"{'✅' if ok else '❌'} {len(ns)} test: {names}"
 
     rows = []
-
-    import re
 
     def tr(x: str) -> str:                       # ondalık ayırıcı virgül
         return re.sub(r"(\d)\.(\d)", r"\1,\2", x)
@@ -199,7 +198,7 @@ def main():
         f"Bilinçli sapma: düşük eşik yanlış kısmayı ve titremeyi artırdı (Deney 6d, ADR-017, FM-04). {ev}")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     row("REQ-S-04", "Bilinen sınırlamalar belgelenir", "README", "–",
-        "GEÇTİ" if "## Bilinen sınırlamalar" in readme else "KALDI", "README › Bilinen sınırlamalar, docs/fmea.md")
+        "GEÇTİ" if re.search(r"^##\s+(\d+\.\s+)?Bilinen sınırlamalar", readme, re.M) else "KALDI", "README › Bilinen sınırlamalar, docs/fmea.md")
 
     # ------------------------------------------------ çıktı
     rows.sort(key=lambda r: (r[0][4], int(r[0].split("-")[2])))
@@ -210,7 +209,7 @@ def main():
         "# Gereksinim doğrulama matrisi",
         "",
         f"`eval/verify_requirements.py` ile üretildi. Yapılandırma: TensorRT FP16, GPU hattı, takip, tam kare + bant "
-        f"her karede (ADR-016, ADR-021). Sonuç klasörü: `{a.run.relative_to(ROOT) if a.run.is_relative_to(ROOT) else a.run}`. "
+        f"her karede (ADR-016, ADR-021). Sonuç klasörü: `{(a.run.relative_to(ROOT) if a.run.is_relative_to(ROOT) else a.run).as_posix()}`. "
         f"Gereksinimler: [requirements.md](requirements.md), riskler: [fmea.md](fmea.md).",
         "",
         "**Özet:** " + " · ".join(f"{icon[k]} {k} {cnt[k]}" for k in icon if cnt[k]),

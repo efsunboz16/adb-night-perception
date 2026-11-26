@@ -136,3 +136,8 @@ Her önemli teknik karar burada kısa olarak kayıt altına alınır: bağlam, k
   Doğruluk, Ultralytics motor yoluyla aynı testlerle karşılaştırılır. C++ hattı README'de gelecek çalışma olarak kalır.
 - **Sonuç (Deney 12):** Bant her karede, uçtan uca p95 81,2 → **20,4 ms**, ortalama 16,6 ms (~60 FPS). Doğruluk Ultralytics yoluyla aynı (tam kare birebir; bantta yuvarlama kaynaklı ≤ %0,7 fark). NMS IoU, Ultralytics `predict`'in kullandığı 0,5'e eşitlendi. Python'un yorumlayıcı yükü (takip, far kararı) ~1 ms. Jetson'da Python yükü daha ağır olabilir; gömülü iddiası ADR-002'deki sınırlar içinde kalır.
 - **ADR-016 kapandı:** bant her karede işlenir. İki karede bir işlemenin gecikme gerekçesi kalmadı.
+
+## ADR-022 · Bant her karede: kamaşma lehine titreme bedeli
+- **Bağlam:** Faz 6'da dağıtılan yapılandırma ölçüldü (Deney 13). Bant her karede işlenince lambası yanan araçta kamaşma ihlali 5/374 → 3/374 (%1,3 → %0,8, hedef ≤ %1), ama histerezisli titreme 1,25 → 5,0 / dk (hedef ≤ 2). Titreme örneği çok küçük: toplam ~0,8 dakika, 1 olay = 1,25 / dk; fark 1 olaya karşı 4 olay.
+- **Karar:** Bant her karede işlenmeye devam eder. Gereksinimlerdeki hata asimetrisi (requirements.md §6) kamaştırmayı daha ağır sayıyor; gecikme bütçesi de bantı her karede kaldırıyor (Deney 12).
+- **Sonuç:** REQ-P-01 karşılanıyor, REQ-P-04 karşılanmıyor. Titreme için önerilen yol: 30 fps gerçek kayıtla ölçmek ve yalnız bantta görülen izler için daha uzun onay (ör. 3 görüş) denemek. ADR-016'nın "bant her karede" kapanışı bu kararla gerekçelendirildi.

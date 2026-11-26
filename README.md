@@ -14,11 +14,12 @@
 | 220 m'de karşıdan gelen aracı yakalama (gece) | **%85** | %90 | ❌ yaklaştı: tam kare %75 → ufuk bandıyla %85 |
 | Uçtan uca gecikme (p95) | **20,4 ms** | ≤ 50 ms | ✅ |
 | İşlem hızı | **~60 FPS** (RTX 5050) | ≥ 25 FPS | ⚠️ gömülü cihazda ölçülmedi |
-| Lambası yanan araçta kamaşma ihlali | **%1,3** | ≤ %1 | ❌ ihlallerin 4/5'i bozuk görüntüden |
+| Lambası yanan araçta kamaşma ihlali | **%0,8** (3 / 374) | ≤ %1 | ✅ küçük örnek: %95 aralık %0,3–2,3 |
 | Far geometrisi kaynaklı kamaşma | **0** | | ✅ araç bulunduğunda doğru segment her seferinde kısıldı |
-| Far titremesi (otoyol) | **1,2 / dk** | ≤ 2 / dk | ✅ |
+| Uzun far kullanımı | **%63** | ≥ %80 | ❌ kalıcı ışık kaynakları (sokak lambası, yansıma) gereksiz kısma yaptırıyor |
+| Far titremesi (otoyol) | **5,0 / dk** | ≤ 2 / dk | ❌ bantın bedeli; bantsız 1,2. Küçük örnek: 1 olay = 1,25 / dk |
 
-Gereksinimlerin tamamı, ölçüm kaynaklarıyla: [docs/verification.md](docs/verification.md). Sonuçlar burada olduğu gibi, başarısızlıklar dahil raporlanıyor.
+18 gereksinimden 8'i karşılandı, 4'ü kısmen, 4'ü karşılanmadı; 1'i ölçülemedi, 1'i uygulanmadı. Tamamı, ölçüm kaynaklarıyla: [docs/verification.md](docs/verification.md). Sonuçlar olduğu gibi, başarısızlıklar dahil raporlanıyor.
 
 ---
 
@@ -172,7 +173,15 @@ C++ portu ve Jetson ölçümü gelecek çalışma olarak bırakıldı ([ADR-021]
 
 ### Faz 6 · Doğrulama, risk analizi, demo
 
-Aşağıda.
+Faz 4'ün sistem metrikleri bantsız ölçülmüştü; dağıtılan yapılandırma (bant her karede) yeniden ölçüldü (Deney 13). Ortaya bir ödünleşim çıktı:
+
+| | Takip · tam kare | **Takip · tam kare + bant (dağıtılan)** | Hedef |
+|---|---|---|---|
+| Lambası yanan araçta kamaşma (68 video) | 5 / 374 (%1,3) | **3 / 374 (%0,8)** | ≤ %1 |
+| Titreme / dk (20 video) | 1,25 | **5,0** | ≤ 2 |
+| Uzun far kullanımı | %65 | **%63** | ≥ %80 |
+
+Bant, Faz 4'te ıslak cam ve sarsıntılı videolarda kaçan iki aracı buldu; ama uzakta kısa süre görünüp kaybolan tespitler titremeyi artırdı. İki fark da küçük örneğe dayanıyor (2 araç; 3 titreme olayı). Gereksinimlerdeki asimetri gereği (kamaştırmak, gereksiz kısmadan daha ağır) **bant her karede kaldı** ([ADR-022](docs/decisions.md)); titreme 30 fps gerçek kayıtla yeniden ele alınmalı.
 
 ## 7. Doğrulama ve risk analizi
 
@@ -194,7 +203,7 @@ Doğrulama iki eksiği de ortaya çıkardı ve ikisi de matriste açıkça yazı
 
 Riskleri destekleyen hata enjeksiyonu testleri: [`tests/test_requirements.py`](tests/test_requirements.py).
 
-**Demo.** Sistemin farklı bir kameradan, aydınlatılmış bir şehir otoyolundaki davranışı:
+**Demo.** Sistemin farklı bir kameradan, sokak lambalı çok şeritli bir şehir otoyolundaki davranışı. Karşı şerit ve öndeki araçlar far kapsamının tamamını doldurduğu için maske çoğu karede tamamen kısık: bu yoğunlukta doğru davranış bu. Seçici karartma seyrek trafikli, aydınlatmasız yolda görünür.
 
 <p align="center"><img src="docs/media/demo_frames.jpg" width="900" alt="Demo videosundan üç kare"></p>
 
@@ -207,6 +216,7 @@ Bu video modelin eğitim verisinden farklı (1080p, bilinmeyen görüş açısı
 - **Işık sınıflarının gerçek doğruluğu ölçülmedi.** Doğrulama etiketleri de otomatik; raporlanan değerler modelin otomatik etiketleyiciyi ne kadar taklit ettiğini gösteriyor.
 - **Mesafeler yaklaşık.** BDD100K'da mesafe etiketi yok; kutu genişliğinden, 60° görüş açısı varsayımıyla türetiliyor. Gerçek kamera kalibre edilmedi.
 - **Video verisi 5 fps**, gerçek kamera 30 fps; her videoda tek etiketli kare. Takip parametreleri kare cinsinden ve 5 fps'e göre ayarlı.
+- **Sistem metriklerinin örneği küçük.** Kamaşma 374 ışıklı araçta ölçüldü (1 araç ≈ 0,3 puan); titreme toplam ~0,8 dakikalık videoda (1 olay = 1,25 / dk).
 - **Yanlış alarm ölçümü kötümser:** BDD'nin etiketlemediği uzak araçlar da yanlış alarm sayılıyor.
 - **Uzak araç örneği küçük:** video setinde 125 m ötesinde 42 araç.
 

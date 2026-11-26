@@ -51,7 +51,15 @@ def make_gif(frames, fps, out: Path):
     from PIL import Image
 
     ims = [Image.fromarray(f) for f in frames]
-    pal = ims[len(ims) // 2].quantize(colors=128, method=Image.Quantize.MEDIANCUT)
+    # Ortak palet: 8 kareden örnek + bindirme renkleri (sarı segment, yeşil kutu, kırmızı uyarı...).
+    # Tek kareden palet alınınca o karede olmayan renkler (ör. açık segment sarısı) bozuluyordu.
+    idx = np.linspace(0, len(frames) - 1, min(8, len(frames))).astype(int)
+    small = [cv2.resize(frames[i], (frames[i].shape[1] // 2, frames[i].shape[0] // 2)) for i in idx]
+    sw = np.zeros((small[0].shape[0], 40, 3), np.uint8)
+    for j, c in enumerate([(255, 215, 0), (60, 60, 60), (80, 220, 80), (255, 255, 255), (255, 60, 60),
+                           (60, 180, 220), (200, 160, 0), (45, 45, 45), (230, 230, 230), (0, 160, 200)]):
+        sw[j * sw.shape[0] // 10:(j + 1) * sw.shape[0] // 10] = c
+    pal = Image.fromarray(np.hstack(small + [sw])).quantize(colors=192, method=Image.Quantize.MEDIANCUT)
     q = [im.quantize(palette=pal, dither=Image.Dither.NONE) for im in ims]
     q[0].save(out, save_all=True, append_images=q[1:], duration=int(1000 / fps), loop=0, optimize=True)
     print(f"  {out.name}: {len(q)} kare, {out.stat().st_size / 1e6:.1f} MB")
