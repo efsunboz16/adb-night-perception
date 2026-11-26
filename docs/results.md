@@ -324,3 +324,49 @@ RTX 5050 Laptop (8 GB, Blackwell sm_120), TensorRT 10.16.1, CUDA 12.8. Prizde, W
 3. **Bant tam karenin 1,9 katı** (CUDA Graph'sız ölçümle). Faz 3 tahminiyle (~1,7–2 kat) uyumlu. Bant batch 4 ile uzun ve az çekirdek çalıştırdığı için zaten kararlı.
 4. **Bantta veri aktarımı 2 ms:** giriş FP32, 4 parça 26 MB. C++ hattında görüntüyü 8 bit gönderip ölçekleme/normalizasyonu GPU'da yapmak aktarımı dörtte birine indirir.
 5. **Henüz ölçülmedi:** FP16'nın doğruluğa etkisi (mAP, uzak recall, kamaşma) ve Python hattının uçtan uca gecikmesi (`eval/bench_latency.py`). Bant zamanlaması kararı (ADR-016) bunlardan sonra verilecek.
+
+## Deney 10 · FP16 doğruluk eşitliği (TensorRT FP16 ve PyTorch, aynı görüntüler)
+
+Motorlar `deploy/export.py` ile (TensorRT 10.16.1, RTX 5050). PyTorch ölçümleri aynı gün aynı kodla tekrarlandı.
+
+**Mesafe bazlı recall, gece (3.363 görüntü), araç kutusu veya ışığı, güven ≥ 0,10** (PyTorch / FP16):
+
+| Mesafe | > 249 m (n=55) | 166–249 m (n=665) | 125–166 m (n=1.877) | 83–125 m (n=5.007) | Yanlış alarm / kare |
+|---|---|---|---|---|---|
+| Tam kare | 0,527 / 0,527 | 0,750 / 0,752 | 0,833 / 0,833 | 0,894 / 0,894 | 2,87 / 2,87 |
+| Tam kare + bant | 0,691 / 0,691 | **0,848 / 0,850** | 0,895 / 0,896 | 0,921 / 0,921 | 4,27 / 4,27 |
+
+Güven ≥ 0,25'te de tüm hücreler üç basamağa kadar aynı.
+
+**mAP50 (araç sınıfları)** (PyTorch / FP16). FP16 için kare 1280×1280 doğrulama motoru; PyTorch `val` dikdörtgen batch kullanıyor, dolgu farklı:
+
+| Koşul | Gündüz | Gece | Yağmurlu gece | Alacakaranlık |
+|---|---|---|---|---|
+| mAP50 | 0,609 / 0,611 | 0,593 / 0,589 | 0,594 / 0,588 | 0,621 / 0,617 |
+| car | 0,841 / 0,841 | 0,786 / 0,785 | 0,786 / 0,783 | 0,836 / 0,831 |
+
+**Video sistem metrikleri** (20 otoyol + yerleşim gece videosu, güven ≥ 0,25, histerezis 1,0 sn): kamaşma ihlali, uzun far kullanımı ve kısık segment oranı altı modun hepsinde PyTorch ile **birebir aynı**. Titreme (histerezisli) aynı; histerezissiz ham segment değişimi ±1,25/dk.
+
+**Gözlemler:**
+1. **FP16 uzak recall'ı korudu.** 220 m hedef bandında fark en fazla 2 tespit (665'te). Yanlış alarm aynı.
+2. **mAP farkı ≤ 0,6 puan**, yönü koşula göre değişiyor (gündüz +0,2, yağmurlu gece −0,6). Doğrulama motorunun kare dolgusu PyTorch'un dikdörtgen batch'inden farklı olduğu için bu fark tamamen hassasiyetten gelmiyor; recall ölçümü (aynı dikdörtgen giriş) daha doğrudan bir karşılaştırma.
+3. **Karar: FP16** (ADR-020). Sistem metrikleri birebir aynı.
+
+## Deney 11 · Python hattında uçtan uca gecikme (`eval/bench_latency.py`)
+
+RTX 5050, FP16 motorlar, 600 gece video karesi (50 ısınma), kareler bellekte. Ultralytics ön/son işleme dahil, CUDA Graph yok. Milisaniye.
+
+| Aşama | Bant her karede: p50 | p95 | Bant 2 karede bir: p50 | p95 |
+|---|---|---|---|---|
+| Tam kare | 9,6 | 15,3 | 6,7 | 10,9 |
+| Bant (işlendiği karede) | 36,7 | 58,0 | 21,1 | 30,2 |
+| Birleştir + takip + karar | 2,3 | 7,3 | 1,1 | 2,2 |
+| Güvenlik izleyici | 3,1 | 6,9 | 1,8 | 2,7 |
+| **Toplam** | **53,9** | **81,2** | **26,1** | **39,3** |
+
+**Gözlemler:**
+1. **REQ-P-06 (p95 ≤ 50 ms) Python'da yalnızca bant iki karede bir işlenirse karşılanıyor** (39,3 ms). 30 fps kare aralığına (33 ms) p95'te sığmıyor.
+2. **Gecikmenin çoğu motor dışında.** Bant motoru 7,8 ms (Deney 9), aşama 36,7 ms: ~29 ms parça kesme/büyütme, Ultralytics'in 4 parça için CPU'da yaptığı letterbox ve tensör dönüşümü, FP32 aktarım ve son işlem. Tam karede motor 3,2 ms, aşama 9,6 ms.
+3. **Güvenlik izleyicinin 3 ms'si tam çözünürlükte ortalama parlaklık hesabı.** Küçültülmüş gri görüntüde alınırsa ihmal edilir.
+4. **Yüzdelikler geniş** (p99 ≈ 1,7 × p50): Python ve CUDA Graph'sız çekirdek başlatma, Deney 9'daki dalgalanmanın aynısı.
+5. **Sonuç:** darboğaz model değil, Python'daki ön/son işleme. C++ hattında (CUDA'da ön işleme, 8 bit aktarım, CUDA Graph) motor süresine yakın bir toplam bekleniyor; bant zamanlaması kararı (ADR-016) C++ ölçümünden sonra. INT8 motor süresini kısaltır ama darboğazı çözmez.

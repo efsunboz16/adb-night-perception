@@ -159,3 +159,11 @@ Hedef: gece 220 m'de recall 0,75 → 0,90. Dört yöntem denendi.
 | Sorun | Çözüm |
 |---|---|
 | Faz 3–4'te gecikme ölçümleri aynı koşulda 16–44 ms arasında oynuyordu. Tam kare motorunda da değişim katsayısı %32 çıktı. | `trtexec` darboğazı gösterdi: GPU değil, CPU'nun çekirdekleri sıraya koyma süresi. CUDA Graph ile p99 8,8 → 2,8 ms, değişim %4. **Çözüldü:** C++ hattında CUDA Graph (ADR-019). |
+| FP16 motorlar hızlı (algılama ~11 ms), ama Python hattının toplamı bant her karede p95 81 ms çıktı (Deney 11). | Aşama aşama ölçüm: bant aşaması 36,7 ms, motoru 7,8 ms. Fark CPU'daki parça hazırlama ve Ultralytics ön/son işlemesi. **Açık:** C++ hattında GPU'da ön işleme ile çözülecek. Şimdilik Python'da bant iki karede bir (p95 39 ms). |
+
+### Doğruluk eşitliği
+
+| Sorun | Çözüm |
+|---|---|
+| FP16'nın uzak ışıkları kaybettirip kaybettirmediği bilinmiyordu. | Aynı görüntülerde PyTorch ve FP16 (Deney 10): 220 m bandında fark 665 araçta en fazla 2 tespit, video sistem metrikleri birebir aynı. FP16 seçildi, INT8 ertelendi (ADR-020). |
+| Ultralytics `val` dikdörtgen motoru desteklemediği için mAP kare doğrulama motoruyla ölçüldü; dolgu PyTorch'tan farklı. | mAP farkı (≤ 0,6 puan) bu yüzden yalnızca hassasiyete bağlanmadı; asıl karşılaştırma aynı dikdörtgen girişle yapılan recall ölçümü. |

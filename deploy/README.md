@@ -80,4 +80,8 @@ python eval/bench_latency.py --weights deploy/models/full_fp16.engine --band-wei
 | Tam kare 736×1280, CUDA Graph | 3,2 ms | 3,4 ms | 3,9 ms |
 | Bant 4 × 704×768 | 7,8 ms | 8,5 ms | 9,3 ms |
 
-Veri aktarımı dahil. Doğruluk eşitliği ve uçtan uca gecikme: sıradaki ölçümler.
+Veri aktarımı dahil.
+
+**Doğruluk (Deney 10):** FP16 = PyTorch (220 m recall 0,848 / 0,850, sistem metrikleri aynı). Hassasiyet FP16 (ADR-020).
+
+**Python hattı (Deney 11):** bant her karede p95 81 ms, iki karede bir 39 ms. Darboğaz motor değil, CPU'daki ön/son işleme. Sıradaki adım C++ hattı.

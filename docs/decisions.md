@@ -120,3 +120,8 @@ Her önemli teknik karar burada kısa olarak kayıt altına alınır: bağlam, k
   4. C++ hattında çıkarım CUDA Graph ile başlatılır.
   5. Sabit boyutlu motora uymayan girdi sessizce yeniden ölçeklenmez, hata verir (uzak ışıklar ölçeklemeyle kaybolur).
 - **Sonuç:** Tam kare p99 8,8 → 2,8 ms, algılama toplamı ~11 ms. Motor dosyaları GPU'ya bağlı: Jetson'da ONNX'ten yeniden derlenir. Ultralytics `val` dikdörtgen girişi desteklemediği için mAP ayrı bir kare (1280×1280) doğrulama motoruyla ölçülür. Hassasiyet seçimi (FP16 / INT8) doğruluk eşitliği ölçülünce ADR-020'de.
+
+## ADR-020 · Hassasiyet: FP16; INT8 ertelendi
+- **Bağlam:** Deney 10'da TensorRT FP16 motorları PyTorch ile karşılaştırıldı. 166–249 m recall 0,848 → 0,850 (bantlı), yanlış alarm aynı, video sistem metrikleri birebir aynı, mAP50 farkı ≤ 0,6 puan. Deney 11'de Python hattının gecikmesinin çoğu motor dışında çıktı (bant aşaması 36,7 ms, motor 7,8 ms).
+- **Karar:** Dağıtım hassasiyeti **FP16**. INT8 şimdilik denenmiyor: motor süresi zaten bütçenin küçük bir kısmı, darboğaz ön/son işleme. INT8'in uzak ışıklar için riski (1–8 px'lik zayıf aktivasyonlar) bu kazanç için alınmaya değmez. Jetson gibi daha zayıf bir cihazda motor süresi darboğaz olursa yeniden açılır; derleyici hazır (`deploy/build_engine.py --precision int8`).
+- **Sonuç:** Sıradaki adım C++ hattı: CUDA'da ön işleme, 8 bit aktarım, CUDA Graph. Bant zamanlaması (ADR-016) C++ ölçümüyle kapanacak.
