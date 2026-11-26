@@ -167,3 +167,10 @@ Hedef: gece 220 m'de recall 0,75 → 0,90. Dört yöntem denendi.
 |---|---|
 | FP16'nın uzak ışıkları kaybettirip kaybettirmediği bilinmiyordu. | Aynı görüntülerde PyTorch ve FP16 (Deney 10): 220 m bandında fark 665 araçta en fazla 2 tespit, video sistem metrikleri birebir aynı. FP16 seçildi, INT8 ertelendi (ADR-020). |
 | Ultralytics `val` dikdörtgen motoru desteklemediği için mAP kare doğrulama motoruyla ölçüldü; dolgu PyTorch'tan farklı. | mAP farkı (≤ 0,6 puan) bu yüzden yalnızca hassasiyete bağlanmadı; asıl karşılaştırma aynı dikdörtgen girişle yapılan recall ölçümü. |
+
+### GPU hattı (ADR-021)
+
+| Sorun | Çözüm |
+|---|---|
+| C++ hattı ~1–1,5 hafta ve Windows derleme ortamı gerektiriyordu; asıl ihtiyaç iki sayıydı (REQ-P-05/06). | C++'ın kazandıracağı işler Python'da yapıldı: kare GPU'ya 8 bit bir kez, dolgu ve bant parçaları GPU'da, motorlar TensorRT Python API'si ve CUDA Graph ile, NMS GPU'da (`adb/trt_runtime.py`). Bant her karede p95 81 → 20 ms. C++ gelecek çalışma. |
+| GPU hattı tam karede +%13 yanlış alarm verdi; aynı motor, aynı görüntüler. | `eval/compare_backends.py` farkı adım adım ayırdı: ön işleme, CUDA Graph, son işleme aynıydı. Fark Ultralytics `predict`'in NMS IoU eşiğindeydi (0,5, varsayılan sanılan 0,7 değil). Eşitlenince tam kare çıktısı birebir aynı. Ders: "varsayılan" bir değeri kaynağından okumadan kopyalamamak. |

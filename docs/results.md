@@ -370,3 +370,32 @@ RTX 5050, FP16 motorlar, 600 gece video karesi (50 ısınma), kareler bellekte. 
 3. **Güvenlik izleyicinin 3 ms'si tam çözünürlükte ortalama parlaklık hesabı.** Küçültülmüş gri görüntüde alınırsa ihmal edilir.
 4. **Yüzdelikler geniş** (p99 ≈ 1,7 × p50): Python ve CUDA Graph'sız çekirdek başlatma, Deney 9'daki dalgalanmanın aynısı.
 5. **Sonuç:** darboğaz model değil, Python'daki ön/son işleme. C++ hattında (CUDA'da ön işleme, 8 bit aktarım, CUDA Graph) motor süresine yakın bir toplam bekleniyor; bant zamanlaması kararı (ADR-016) C++ ölçümünden sonra. INT8 motor süresini kısaltır ama darboğazı çözmez.
+
+## Deney 12 · GPU hattı: ön/son işleme GPU'da, CUDA Graph (`--backend trt`, ADR-021)
+
+Aynı FP16 motorlar, aynı 600 gece video karesi (Deney 11 ile aynı ölçüm). Kare GPU'ya 8 bit bir kez gider; dolgu, bant parçaları, kutu çözümleme ve NMS GPU'da; motorlar Ultralytics'siz, TensorRT Python API'siyle. Milisaniye, bant her karede.
+
+| Aşama · p95 | Ultralytics (Deney 11) | GPU hattı, CUDA Graph yok | **GPU hattı + CUDA Graph** |
+|---|---|---|---|
+| Tam kare | 15,3 | 13,7 | **6,0** |
+| Bant | 58,0 | 25,7 | **13,7** |
+| Birleştir + takip + karar + izleyici | 14,2 | 6,9 | **1,9** |
+| **Toplam p50** | 53,9 | 29,2 | **16,2** |
+| **Toplam p95** | 81,2 | 42,7 | **20,4** |
+| Toplam p99 | 91,3 | 49,7 | **21,9** |
+
+Bant iki karede bir: toplam p50 10,3, p95 19,6 ms.
+
+**Doğruluk** (gece, 3.363 görüntü, güven ≥ 0,10; Ultralytics motor yolu / GPU hattı):
+
+| | 166–249 m recall | Yanlış alarm / kare |
+|---|---|---|
+| Tam kare | 0,752 / 0,752 | 2,87 / 2,87 (birebir aynı) |
+| Tam kare + bant | 0,850 / 0,851 | 4,27 / 4,30 |
+
+**Gözlemler:**
+1. **REQ-P-06 bant her karede işlenirken karşılanıyor:** p95 20,4 ms (hedef ≤ 50), 30 fps kare aralığına (33 ms) da sığıyor. Ortalama 16,6 ms, ~60 FPS (REQ-P-05: ≥ 25). Bu yüzden bant her karede işlenecek (ADR-016 kapandı).
+2. **Kazancın çoğu ön/son işlemeyi GPU'ya taşımaktan ve CUDA Graph'tan.** Bant aşaması 58 → 13,7 ms. Uyarı: CUDA Graph'sız çalıştırmada GPU kullanmayan takip ve karar adımları da 2–3 kat yavaş çıktı; o çalıştırmada CPU saat hızı da düşüktü, CUDA Graph'ın payı tablodakinden biraz küçük olabilir.
+3. **Tam kare çıktısı Ultralytics ile birebir aynı.** İlk ölçümde GPU hattı tam karede +%13 yanlış alarm verdi. `eval/compare_backends.py` adım adım ayırdı: ön işleme aynı (fark 2·10⁻⁵ gri seviye), CUDA Graph ham çıktısı aynı (fark 0), son işleme aynı çıktıdan aynı kutular. Fark Ultralytics `predict`'in NMS IoU eşiğindeydi: 0,5 (varsaydığımız 0,7 değil). Düzeltmeden sonra tüm hücreler aynı.
+4. **Bantta kalan küçük fark** (yanlış alarm +%0,7, recall +0,001): parça büyütmede cv2'nin sabit noktalı yuvarlamasıyla en fazla 1 gri seviyelik fark (birim testte ölçüldü).
+5. **Gecikme ölçümü NMS IoU 0,7 ile yapıldı.** Eşik değişikliği yalnızca NMS'e giren kutu sayısını etkiliyor (~50/kare), süreye etkisi ihmal edilebilir.

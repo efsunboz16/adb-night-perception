@@ -134,4 +134,5 @@ Her önemli teknik karar burada kısa olarak kayıt altına alınır: bağlam, k
   3. Motorlar Ultralytics'siz, TensorRT Python API'siyle, CUDA Graph ile çalışır.
   4. Kutu çözümleme, eşik ve sınıf bazında NMS GPU'da; CPU'ya yalnızca kalan kutular iner.
   Doğruluk, Ultralytics motor yoluyla aynı testlerle karşılaştırılır. C++ hattı README'de gelecek çalışma olarak kalır.
-- **Sonuç:** Python'un yorumlayıcı yükü (takip, far kararı) kalır, ama bunlar Deney 11'de toplam ~2 ms. Jetson'da Python yükü daha ağır olabilir; gömülü iddiası ADR-002'deki sınırlar içinde kalır.
+- **Sonuç (Deney 12):** Bant her karede, uçtan uca p95 81,2 → **20,4 ms**, ortalama 16,6 ms (~60 FPS). Doğruluk Ultralytics yoluyla aynı (tam kare birebir; bantta yuvarlama kaynaklı ≤ %0,7 fark). NMS IoU, Ultralytics `predict`'in kullandığı 0,5'e eşitlendi. Python'un yorumlayıcı yükü (takip, far kararı) ~1 ms. Jetson'da Python yükü daha ağır olabilir; gömülü iddiası ADR-002'deki sınırlar içinde kalır.
+- **ADR-016 kapandı:** bant her karede işlenir. İki karede bir işlemenin gecikme gerekçesi kalmadı.

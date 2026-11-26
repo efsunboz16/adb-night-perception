@@ -99,4 +99,6 @@ Veri aktarımı dahil.
 
 **Doğruluk (Deney 10):** FP16 = PyTorch (220 m recall 0,848 / 0,850, sistem metrikleri aynı). Hassasiyet FP16 (ADR-020).
 
-**Python hattı (Deney 11):** bant her karede p95 81 ms, iki karede bir 39 ms. Darboğaz motor değil, CPU'daki ön/son işleme. GPU hattı (bölüm 5) bunu hedefliyor.
+**Uçtan uca (Deney 11–12), bant her karede:** Ultralytics ile p95 81 ms; GPU hattı + CUDA Graph ile **p95 20,4 ms**, ortalama 16,6 ms (~60 FPS). GPU hattının çıktısı Ultralytics yoluyla aynı (tam kare birebir). Bant her karede işlenir.
+
+**Sorun giderme:** iki hat farklı sonuç verirse `python eval/compare_backends.py` ön işlemeyi, CUDA Graph'ı, son işlemeyi ve uçtan uca çıktıyı ayrı ayrı karşılaştırır. Deney 12'deki fark böyle bulundu: Ultralytics `predict` NMS IoU 0,5 kullanıyor.
