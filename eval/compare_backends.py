@@ -52,7 +52,7 @@ def main():
 
     from adb.models import load_detectors
     from adb.slicing import predict_full
-    from adb.trt_runtime import TrtEngine, decode, letterbox_params, preprocess_full
+    from adb.trt_runtime import NMS_IOU, TrtEngine, decode, letterbox_params, preprocess_full
     from build_engine import letterbox_chw
 
     names = (a.data / "splits/test/night.txt").read_text(encoding="utf-8").split()[:a.n]
@@ -63,7 +63,10 @@ def main():
     lb = letterbox_params(720, 1280, H, W)
     ult, _ = load_detectors(a.weights, None, need_band=False)
     gpu, _ = load_detectors(a.weights, None, need_band=False, backend="trt")
+    predict_full(ult, imgs[0], a.conf)
+    ua = ult.model.predictor.args
     print(f"{len(imgs)} gece test görüntüsü, güven ≥ {a.conf} | {a.weights}")
+    print(f"NMS IoU: GPU hattı {NMS_IOU}, Ultralytics predict {ua.iou} (sınıftan bağımsız: {ua.agnostic_nms})")
     print(f"CUDA Graph: {'var' if eg.graph is not None else 'KURULAMADI'}")
 
     d_in, d_graph, n_dec = [], [], [0, 0, 0, 0]
@@ -81,7 +84,7 @@ def main():
         d_graph.append(float((og - on).abs().max()))
         # 3. son işleme: aynı ham çıktı (CUDA Graph'sız)
         (bx, cl, sc), = decode(on, a.conf)
-        u = non_max_suppression(on, a.conf, 0.7, max_det=300)[0]
+        u = non_max_suppression(on, a.conf, NMS_IOU, max_det=300)[0]
         mine = (bx.cpu().numpy(), cl.cpu().numpy(), sc.cpu().numpy())
         theirs = (u[:, :4].cpu().numpy(), u[:, 5].cpu().numpy().astype(int), u[:, 4].cpu().numpy())
         p, ra, rb = match(mine, theirs, 0.99)

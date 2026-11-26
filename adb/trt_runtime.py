@@ -25,7 +25,9 @@ import numpy as np
 
 PAD = 114 / 255.0
 DEFAULT_CUDA_GRAPH = True
-NMS_IOU = 0.7          # Ultralytics predict varsayılanı
+# Faz 1–5'teki tüm sonuçlar Ultralytics predict ile ölçüldü; orada NMS IoU 0,5 (predictor.args.iou,
+# Ultralytics 8.4.215). 0,7 kullanılınca tam karede +%13 yakın kopya kutu çıktı (eval/compare_backends.py).
+NMS_IOU = 0.5
 MAX_DET = 300
 
 
